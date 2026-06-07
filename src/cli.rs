@@ -5,7 +5,11 @@ use wolfram::roblox_context::ScriptType;
 /// Otherwise return the project_root itself.
 pub fn resolve_src_root(project_root: &Path) -> PathBuf {
     let src_dir = project_root.join("src");
-    if src_dir.is_dir() { src_dir } else { project_root.to_path_buf() }
+    if src_dir.is_dir() {
+        src_dir
+    } else {
+        project_root.to_path_buf()
+    }
 }
 
 pub struct ProjectConfig {
@@ -102,7 +106,12 @@ pub fn transpile_project(input: &Path, out_root: &Path, verbose: bool) -> (usize
                     std::fs::create_dir_all(parent).ok();
                 }
                 if std::fs::write(&out, &luau).is_ok() {
-                    println!("  ✓  {}  →  {}  [{}]", src_str, out.display(), script_type.label());
+                    println!(
+                        "  ✓  {}  →  {}  [{}]",
+                        src_str,
+                        out.display(),
+                        script_type.label()
+                    );
                     let type_issues = wolfram::check_types(&source_code);
                     for msg in &type_issues {
                         println!("      {}", msg);
@@ -138,7 +147,13 @@ pub fn transpile_project(input: &Path, out_root: &Path, verbose: bool) -> (usize
 }
 
 /// Transpile a single file into out_root, preserving directory structure relative to src_root.
-pub fn transpile_single(input: &Path, src_root: &Path, out_root: &Path, project_root: &Path, verbose: bool) {
+pub fn transpile_single(
+    input: &Path,
+    src_root: &Path,
+    out_root: &Path,
+    project_root: &Path,
+    verbose: bool,
+) {
     println!("\n🔨  Wolfram Transpiler  ──  single file mode");
     let out = make_out_path(input, src_root, out_root);
     println!("    source : {}", input.display());
@@ -147,7 +162,11 @@ pub fn transpile_single(input: &Path, src_root: &Path, out_root: &Path, project_
     let wcfg = cfg.wolfram_toml.as_ref();
     let rojo = cfg.rojo_mappings.as_deref();
     let out_str = out_root.display().to_string();
-    let rel = input.strip_prefix(project_root).unwrap_or(input).display().to_string();
+    let rel = input
+        .strip_prefix(project_root)
+        .unwrap_or(input)
+        .display()
+        .to_string();
     if wcfg.is_some() || rojo.is_some() {
         transpile_file_with_fn(input, &out, &rel, verbose, |src, path| {
             wolfram::transpile_roblox(src, path, wcfg, path, rojo, &out_str)
@@ -160,7 +179,8 @@ pub fn transpile_single(input: &Path, src_root: &Path, out_root: &Path, project_
 }
 
 fn transpile_file_with_fn<F>(src_path: &Path, out_path: &Path, rel: &str, verbose: bool, f: F)
-where F: Fn(&str, &str) -> Result<String, String>
+where
+    F: Fn(&str, &str) -> Result<String, String>,
 {
     let src_str = src_path.display().to_string();
     let out_str = out_path.display().to_string();

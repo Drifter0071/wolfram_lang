@@ -21,8 +21,18 @@ pub fn load_rojo_mappings(project_root: &Path) -> Option<Vec<RojoPathMapping>> {
     let raw = fs::read_to_string(&rojo_path).ok()?;
     let project: RojoProject = serde_json::from_str(&raw).ok()?;
     let mut mappings = Vec::new();
-    walk_tree(&project.tree, &mut Vec::new(), "", project_root, &mut mappings);
-    if mappings.is_empty() { None } else { Some(mappings) }
+    walk_tree(
+        &project.tree,
+        &mut Vec::new(),
+        "",
+        project_root,
+        &mut mappings,
+    );
+    if mappings.is_empty() {
+        None
+    } else {
+        Some(mappings)
+    }
 }
 
 fn walk_tree(
@@ -41,8 +51,12 @@ fn walk_tree(
     let fs_path = obj.get("$path").and_then(|v| v.as_str());
 
     for (key, value) in obj {
-        if key.starts_with('$') { continue; }
-        if !value.is_object() { continue; }
+        if key.starts_with('$') {
+            continue;
+        }
+        if !value.is_object() {
+            continue;
+        }
 
         parent_keys.push(key.clone());
         let child_instance = if instance_prefix.is_empty() {
@@ -51,7 +65,8 @@ fn walk_tree(
             format!("{}.{}", instance_prefix, key)
         };
 
-        let is_service = value.get("$className")
+        let is_service = value
+            .get("$className")
             .and_then(|v| v.as_str())
             .map(|c| is_roblox_service(c))
             .unwrap_or(false);
@@ -103,8 +118,12 @@ fn walk_children_of_service(
     // Collect all $path entries under this service
     let mut stack: Vec<(String, &serde_json::Value)> = Vec::new();
     for (key, value) in obj {
-        if key.starts_with('$') { continue; }
-        if !value.is_object() { continue; }
+        if key.starts_with('$') {
+            continue;
+        }
+        if !value.is_object() {
+            continue;
+        }
         stack.push((key.clone(), value));
     }
 
@@ -119,8 +138,12 @@ fn walk_children_of_service(
             });
         } else if let Some(children) = value.as_object() {
             for (ck, cv) in children {
-                if ck.starts_with('$') { continue; }
-                if !cv.is_object() { continue; }
+                if ck.starts_with('$') {
+                    continue;
+                }
+                if !cv.is_object() {
+                    continue;
+                }
                 let full_key = format!("{}.{}", key, ck);
                 stack.push((full_key, cv));
             }
@@ -129,18 +152,43 @@ fn walk_children_of_service(
 }
 
 fn is_roblox_service(class_name: &str) -> bool {
-    matches!(class_name,
-        "ReplicatedStorage" | "ServerScriptService" | "ServerStorage" |
-        "StarterPlayer" | "StarterGui" | "StarterPack" |
-        "Lighting" | "SoundService" | "RunService" |
-        "Workspace" | "Players" | "Teams" | "Chat" |
-        "HttpService" | "TeleportService" | "MarketplaceService" |
-        "DataStoreService" | "MessagingService" | "PathfindingService" |
-        "PhysicsService" | "CollectionService" | "TweenService" |
-        "UserInputService" | "ContextActionService" | "LocalizationService" |
-        "SocialService" | "GroupService" | "PolicyService" |
-        "AnalyticsService" | "AvatarEditorService" | "BadgeService" |
-        "MemoryStoreService" | "TextService" | "GuiService" | "HapticService"
+    matches!(
+        class_name,
+        "ReplicatedStorage"
+            | "ServerScriptService"
+            | "ServerStorage"
+            | "StarterPlayer"
+            | "StarterGui"
+            | "StarterPack"
+            | "Lighting"
+            | "SoundService"
+            | "RunService"
+            | "Workspace"
+            | "Players"
+            | "Teams"
+            | "Chat"
+            | "HttpService"
+            | "TeleportService"
+            | "MarketplaceService"
+            | "DataStoreService"
+            | "MessagingService"
+            | "PathfindingService"
+            | "PhysicsService"
+            | "CollectionService"
+            | "TweenService"
+            | "UserInputService"
+            | "ContextActionService"
+            | "LocalizationService"
+            | "SocialService"
+            | "GroupService"
+            | "PolicyService"
+            | "AnalyticsService"
+            | "AvatarEditorService"
+            | "BadgeService"
+            | "MemoryStoreService"
+            | "TextService"
+            | "GuiService"
+            | "HapticService"
     )
 }
 
@@ -186,33 +234,44 @@ impl RojoPathMapping {
 
         // Try to find mappings
         let current_mapping = mappings.iter().find(|m| {
-            import_out.starts_with(&format!("{}/", m.fs_path)) ||
-            import_out == m.fs_path
+            import_out.starts_with(&format!("{}/", m.fs_path)) || import_out == m.fs_path
         });
 
         let import_mapping = mappings.iter().find(|m| {
             let target_out = format!("{}/{}", out_dir, resolved).replace(".wrm", ".luau");
-            target_out.starts_with(&format!("{}/", m.fs_path)) ||
-            target_out == m.fs_path
+            target_out.starts_with(&format!("{}/", m.fs_path)) || target_out == m.fs_path
         });
 
         match (current_mapping, import_mapping) {
             (Some(current), Some(import)) => {
-                let module_name = resolved.rsplit('/').next().unwrap_or(&resolved)
-                    .strip_suffix(".wrm").unwrap_or(&resolved)
+                let module_name = resolved
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&resolved)
+                    .strip_suffix(".wrm")
+                    .unwrap_or(&resolved)
                     .replace('.', "_");
 
-                if current.service == import.service && current.instance_path == import.instance_path.split('.').next().unwrap_or("") {
+                if current.service == import.service
+                    && current.instance_path == import.instance_path.split('.').next().unwrap_or("")
+                {
                     // Same service and same root folder — use script.Parent
-                    Some((format!("script.Parent.{}", module_name), current.service.clone()))
+                    Some((
+                        format!("script.Parent.{}", module_name),
+                        current.service.clone(),
+                    ))
                 } else {
                     let path = format!("{}.{}", import.instance_path, module_name);
                     Some((path, import.service.clone()))
                 }
             }
             (None, Some(import)) => {
-                let module_name = resolved.rsplit('/').next().unwrap_or(&resolved)
-                    .strip_suffix(".wrm").unwrap_or(&resolved)
+                let module_name = resolved
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&resolved)
+                    .strip_suffix(".wrm")
+                    .unwrap_or(&resolved)
                     .replace('.', "_");
                 let path = format!("{}.{}", import.instance_path, module_name);
                 Some((path, import.service.clone()))
@@ -227,7 +286,9 @@ fn normalize_path(path: &str) -> String {
     for seg in path.split('/') {
         match seg {
             "" | "." => continue,
-            ".." => { parts.pop(); }
+            ".." => {
+                parts.pop();
+            }
             _ => parts.push(seg),
         }
     }

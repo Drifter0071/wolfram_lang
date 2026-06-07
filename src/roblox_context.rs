@@ -27,13 +27,19 @@ impl ScriptType {
 }
 
 const SERVER_ONLY_SERVICES: &[&str] = &[
-    "ServerScriptService", "ServerStorage", "DataStoreService",
-    "MessagingService", "PathfindingService",
+    "ServerScriptService",
+    "ServerStorage",
+    "DataStoreService",
+    "MessagingService",
+    "PathfindingService",
 ];
 
 const CLIENT_ONLY_SERVICES: &[&str] = &[
-    "UserInputService", "GuiService", "HapticService",
-    "ContextActionService", "StarterGui",
+    "UserInputService",
+    "GuiService",
+    "HapticService",
+    "ContextActionService",
+    "StarterGui",
 ];
 
 pub fn check_api_access(script_type: ScriptType, service_name: &str) -> Option<String> {

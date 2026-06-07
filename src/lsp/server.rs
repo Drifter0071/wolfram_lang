@@ -1,21 +1,23 @@
-use std::sync::Mutex;
+use lsp_server::{Connection, Message, Request, Response};
+use lsp_types::notification::*;
+use lsp_types::request::Request as _;
+use lsp_types::request::*;
+use lsp_types::*;
 use std::fs;
 use std::path::Path;
-use lsp_server::{Connection, Message, Request, Response};
-use lsp_types::*;
-use lsp_types::notification::*;
-use lsp_types::request::*;
-use lsp_types::request::Request as _;
+use std::sync::Mutex;
 
-use crate::lsp::store::DocumentStore;
 use crate::lsp::bindings::Bindings;
-use crate::lsp::{handlers, code_actions, rename, inlay_hints};
+use crate::lsp::store::DocumentStore;
+use crate::lsp::{code_actions, handlers, inlay_hints, rename, semantic_tokens, symbols};
 
 pub fn run(bindings_path: Option<&str>) -> Result<(), String> {
     eprintln!("Wolfram LSP starting...");
     let (connection, io_threads) = Connection::stdio();
     let server_capabilities = ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::INCREMENTAL)),
+        text_document_sync: Some(TextDocumentSyncCapability::Kind(
+            TextDocumentSyncKind::INCREMENTAL,
+        )),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec![".".into(), ":".into()]),
             ..Default::default()
@@ -33,6 +35,53 @@ pub fn run(bindings_path: Option<&str>) -> Result<(), String> {
             work_done_progress_options: Default::default(),
         })),
         inlay_hint_provider: Some(OneOf::Left(true)),
+        semantic_tokens_provider: Some(
+            SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
+                SemanticTokensRegistrationOptions {
+                    text_document_registration_options: {
+                        TextDocumentRegistrationOptions {
+                            document_selector: Some(vec![DocumentFilter {
+                                language: Some("wolfram".into()),
+                                scheme: Some("file".into()),
+                                pattern: None,
+                            }]),
+                        }
+                    },
+                    semantic_tokens_options: SemanticTokensOptions {
+                        legend: SemanticTokensLegend {
+                            token_types: vec![
+                                SemanticTokenType::NAMESPACE.into(),  // 0
+                                SemanticTokenType::TYPE.into(),       // 1 enum/struct
+                                SemanticTokenType::CLASS.into(),      // 2
+                                SemanticTokenType::FUNCTION.into(),   // 3
+                                SemanticTokenType::PROPERTY.into(),   // 4
+                                SemanticTokenType::METHOD.into(),     // 5
+                                SemanticTokenType::VARIABLE.into(),   // 6
+                                SemanticTokenType::PARAMETER.into(),  // 7
+                                SemanticTokenType::KEYWORD.into(),    // 8
+                                SemanticTokenType::STRING.into(),     // 9
+                                SemanticTokenType::NUMBER.into(),     // 10
+                                SemanticTokenType::COMMENT.into(),    // 11
+                                SemanticTokenType::OPERATOR.into(),   // 12
+                                SemanticTokenType::DECORATOR.into(),  // 13
+                            ],
+                            token_modifiers: vec![
+                                SemanticTokenModifier::DECLARATION.into(),
+                                SemanticTokenModifier::DEFINITION.into(),
+                                SemanticTokenModifier::READONLY.into(),
+                                SemanticTokenModifier::STATIC.into(),
+                                SemanticTokenModifier::ASYNC.into(),
+                            ],
+                        },
+                        full: Some(SemanticTokensFullOptions::Bool(true)),
+                        range: Some(true),
+                        ..Default::default()
+                    },
+                    static_registration_options: StaticRegistrationOptions { id: None },
+                },
+            ),
+        ),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
         ..Default::default()
     };
 
@@ -84,7 +133,9 @@ pub fn run(bindings_path: Option<&str>) -> Result<(), String> {
         }
     }
 
-    io_threads.join().map_err(|e| format!("IO thread error: {:?}", e))?;
+    io_threads
+        .join()
+        .map_err(|e| format!("IO thread error: {:?}", e))?;
     Ok(())
 }
 
@@ -107,63 +158,143 @@ fn handle_request(
             let params: CompletionParams = serde_json::from_value(req.params.clone()).ok()?;
             let mut s = state.lock().ok()?;
             let workspace_files = s.workspace_files.clone();
-            let result = handlers::handle_completion(&mut s.store, bindings, &workspace_files, params)?;
-            Some(Response { id: req.id.clone(), result: Some(serde_json::to_value(&result).unwrap()), error: None })
+            let result =
+                handlers::handle_completion(&mut s.store, bindings, &workspace_files, params)?;
+            Some(Response {
+                id: req.id.clone(),
+                result: Some(serde_json::to_value(&result).unwrap()),
+                error: None,
+            })
         }
         HoverRequest::METHOD => {
             let params: HoverParams = serde_json::from_value(req.params.clone()).ok()?;
             let mut s = state.lock().ok()?;
             let result = handlers::handle_hover(&mut s.store, bindings, params)?;
-            Some(Response { id: req.id.clone(), result: Some(serde_json::to_value(&result).unwrap()), error: None })
+            Some(Response {
+                id: req.id.clone(),
+                result: Some(serde_json::to_value(&result).unwrap()),
+                error: None,
+            })
         }
         GotoDefinition::METHOD => {
             let params: GotoDefinitionParams = serde_json::from_value(req.params.clone()).ok()?;
             let mut s = state.lock().ok()?;
             let result = handlers::handle_definition(&mut s.store, params)?;
-            Some(Response { id: req.id.clone(), result: Some(serde_json::to_value(&result).unwrap()), error: None })
+            Some(Response {
+                id: req.id.clone(),
+                result: Some(serde_json::to_value(&result).unwrap()),
+                error: None,
+            })
         }
         SignatureHelpRequest::METHOD => {
             let params: SignatureHelpParams = serde_json::from_value(req.params.clone()).ok()?;
             let mut s = state.lock().ok()?;
             let result = handlers::handle_signature_help(&mut s.store, bindings, params)?;
-            Some(Response { id: req.id.clone(), result: Some(serde_json::to_value(&result).unwrap()), error: None })
+            Some(Response {
+                id: req.id.clone(),
+                result: Some(serde_json::to_value(&result).unwrap()),
+                error: None,
+            })
         }
         DocumentSymbolRequest::METHOD => {
             let params: DocumentSymbolParams = serde_json::from_value(req.params.clone()).ok()?;
             let mut s = state.lock().ok()?;
-            let result = handlers::handle_document_symbols(&mut s.store, params)?;
-            Some(Response { id: req.id.clone(), result: Some(serde_json::to_value(&result).unwrap()), error: None })
+            let result = symbols::handle_document_symbols(&mut s.store, params);
+            let val = result.map(|syms| {
+                serde_json::to_value(syms).unwrap_or_default()
+            })?;
+            Some(Response {
+                id: req.id.clone(),
+                result: Some(val),
+                error: None,
+            })
         }
         CodeActionRequest::METHOD => {
             let params: CodeActionParams = serde_json::from_value(req.params.clone()).ok()?;
             let mut s = state.lock().ok()?;
             let result = code_actions::handle_code_action(&mut s.store, params);
-            let actions: Vec<serde_json::Value> = result.into_iter()
+            let actions: Vec<serde_json::Value> = result
+                .into_iter()
                 .map(|a| serde_json::to_value(&a).unwrap())
                 .collect();
-            Some(Response { id: req.id.clone(), result: Some(serde_json::to_value(&actions).unwrap()), error: None })
+            Some(Response {
+                id: req.id.clone(),
+                result: Some(serde_json::to_value(&actions).unwrap()),
+                error: None,
+            })
         }
         Rename::METHOD => {
             let params: RenameParams = serde_json::from_value(req.params.clone()).ok()?;
             let mut s = state.lock().ok()?;
             let result = rename::handle_rename(&mut s.store, params)?;
-            Some(Response { id: req.id.clone(), result: Some(serde_json::to_value(&result).unwrap()), error: None })
+            Some(Response {
+                id: req.id.clone(),
+                result: Some(serde_json::to_value(&result).unwrap()),
+                error: None,
+            })
         }
         PrepareRenameRequest::METHOD => {
-            let params: TextDocumentPositionParams = serde_json::from_value(req.params.clone()).ok()?;
+            let params: TextDocumentPositionParams =
+                serde_json::from_value(req.params.clone()).ok()?;
             let mut s = state.lock().ok()?;
             let result = rename::handle_prepare_rename(&mut s.store, params)?;
             let val = match result {
-                PrepareRenameResponse::Range(range) => serde_json::to_value(range).unwrap_or_default(),
+                PrepareRenameResponse::Range(range) => {
+                    serde_json::to_value(range).unwrap_or_default()
+                }
                 _ => serde_json::Value::Null,
             };
-            Some(Response { id: req.id.clone(), result: Some(val), error: None })
+            Some(Response {
+                id: req.id.clone(),
+                result: Some(val),
+                error: None,
+            })
         }
         InlayHintRequest::METHOD => {
             let params: InlayHintParams = serde_json::from_value(req.params.clone()).ok()?;
             let mut s = state.lock().ok()?;
             let result = inlay_hints::handle_inlay_hint(&mut s.store, params);
-            Some(Response { id: req.id.clone(), result: Some(serde_json::to_value(&result).unwrap()), error: None })
+            Some(Response {
+                id: req.id.clone(),
+                result: Some(serde_json::to_value(&result).unwrap()),
+                error: None,
+            })
+        }
+        SemanticTokensFullRequest::METHOD => {
+            let params: SemanticTokensParams = serde_json::from_value(req.params.clone()).ok()?;
+            let mut s = state.lock().ok()?;
+            let result = semantic_tokens::handle_semantic_tokens(&mut s.store, params)?;
+            Some(Response {
+                id: req.id.clone(),
+                result: Some(serde_json::to_value(&result).unwrap()),
+                error: None,
+            })
+        }
+        SemanticTokensRangeRequest::METHOD => {
+            // Range semantic tokens: delegate to full for now
+            let params: SemanticTokensRangeParams = serde_json::from_value(req.params.clone()).ok()?;
+            let full_params = SemanticTokensParams {
+                text_document: params.text_document,
+                work_done_progress_params: params.work_done_progress_params,
+                partial_result_params: params.partial_result_params,
+            };
+            let mut s = state.lock().ok()?;
+            let result = semantic_tokens::handle_semantic_tokens(&mut s.store, full_params)?;
+            Some(Response {
+                id: req.id.clone(),
+                result: Some(serde_json::to_value(&result).unwrap()),
+                error: None,
+            })
+        }
+        WorkspaceSymbolRequest::METHOD => {
+            let params: WorkspaceSymbolParams = serde_json::from_value(req.params.clone()).ok()?;
+            let mut s = state.lock().ok()?;
+            let result = symbols::handle_workspace_symbols(&mut s.store, params)?;
+            Some(Response {
+                id: req.id.clone(),
+                result: Some(serde_json::to_value(&result).unwrap()),
+                error: None,
+            })
         }
         _ => None,
     }
@@ -176,14 +307,19 @@ fn handle_notification(
 ) {
     match not.method.as_str() {
         DidOpenTextDocument::METHOD => {
-            if let Ok(params) = serde_json::from_value::<DidOpenTextDocumentParams>(not.params.clone()) {
+            if let Ok(params) =
+                serde_json::from_value::<DidOpenTextDocumentParams>(not.params.clone())
+            {
                 if let Ok(mut s) = state.lock() {
-                    s.store.open(&params.text_document.uri, params.text_document.text);
+                    s.store
+                        .open(&params.text_document.uri, params.text_document.text);
                 }
             }
         }
         DidChangeTextDocument::METHOD => {
-            if let Ok(params) = serde_json::from_value::<DidChangeTextDocumentParams>(not.params.clone()) {
+            if let Ok(params) =
+                serde_json::from_value::<DidChangeTextDocumentParams>(not.params.clone())
+            {
                 if let Ok(mut s) = state.lock() {
                     for change in params.content_changes {
                         s.store.update(&params.text_document.uri, &change.text);
@@ -212,7 +348,9 @@ fn handle_notification(
             }
         }
         DidCloseTextDocument::METHOD => {
-            if let Ok(params) = serde_json::from_value::<DidCloseTextDocumentParams>(not.params.clone()) {
+            if let Ok(params) =
+                serde_json::from_value::<DidCloseTextDocumentParams>(not.params.clone())
+            {
                 if let Ok(mut s) = state.lock() {
                     s.store.close(&params.text_document.uri);
                 }
@@ -222,7 +360,11 @@ fn handle_notification(
     }
 }
 
-fn publish_diagnostics(connection: &Connection, uri: &lsp_types::Url, diags: Vec<lsp_types::Diagnostic>) {
+fn publish_diagnostics(
+    connection: &Connection,
+    uri: &lsp_types::Url,
+    diags: Vec<lsp_types::Diagnostic>,
+) {
     let params = PublishDiagnosticsParams {
         uri: uri.clone(),
         diagnostics: diags,
@@ -238,18 +380,31 @@ fn publish_diagnostics(connection: &Connection, uri: &lsp_types::Url, diags: Vec
 fn scan_workspace_files(root: &str) -> Vec<String> {
     let mut files = Vec::new();
     let src_dir = Path::new(root).join("src");
-    let dir = if src_dir.is_dir() { &src_dir } else { Path::new(root) };
+    let dir = if src_dir.is_dir() {
+        &src_dir
+    } else {
+        Path::new(root)
+    };
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name == ".git" || name == "node_modules" || name == "out" || name == "target" { continue; }
+                    if name == ".git" || name == "node_modules" || name == "out" || name == "target"
+                    {
+                        continue;
+                    }
                     files.extend(scan_workspace_files(&path.display().to_string()));
                 }
             } else if path.extension().and_then(|e| e.to_str()) == Some("wrm") {
                 if let Ok(rel) = path.strip_prefix(dir) {
-                    files.push(rel.display().to_string().replace('\\', "/").trim_end_matches(".wrm").to_string());
+                    files.push(
+                        rel.display()
+                            .to_string()
+                            .replace('\\', "/")
+                            .trim_end_matches(".wrm")
+                            .to_string(),
+                    );
                 }
             }
         }

@@ -16,7 +16,8 @@ pub fn get_snippets() -> Vec<CompletionItem> {
                 "end",
                 "",
                 "return ${1:module}",
-            ].join("\n"),
+            ]
+            .join("\n"),
         ),
         // OOP class with metatable
         snippet(
@@ -37,7 +38,8 @@ pub fn get_snippets() -> Vec<CompletionItem> {
                 "function ${1:ClassName}:init()",
                 "    ${0}",
                 "end",
-            ].join("\n"),
+            ]
+            .join("\n"),
         ),
         // Event connection
         snippet(
@@ -45,11 +47,7 @@ pub fn get_snippets() -> Vec<CompletionItem> {
             CompletionItemKind::SNIPPET,
             "Event:Connect handler",
             "snippet",
-            &[
-                "${1:event}:Connect(function(${2:args})",
-                "    ${0}",
-                "end)",
-            ].join("\n"),
+            &["${1:event}:Connect(function(${2:args})", "    ${0}", "end)"].join("\n"),
         ),
         // GetService
         snippet(
@@ -65,11 +63,7 @@ pub fn get_snippets() -> Vec<CompletionItem> {
             CompletionItemKind::SNIPPET,
             "Numeric for loop with range",
             "snippet",
-            &[
-                "for ${1:i} in range(${2:0}, ${3:10}) {",
-                "    ${0}",
-                "}",
-            ].join("\n"),
+            &["for ${1:i} in range(${2:0}, ${3:10}) {", "    ${0}", "}"].join("\n"),
         ),
         // Try-catch
         snippet(
@@ -83,7 +77,8 @@ pub fn get_snippets() -> Vec<CompletionItem> {
                 "} catch ${1:err} {",
                 "    warn(${1:err})",
                 "}",
-            ].join("\n"),
+            ]
+            .join("\n"),
         ),
         // Guard clause
         snippet(
@@ -96,12 +91,19 @@ pub fn get_snippets() -> Vec<CompletionItem> {
                 "    return ${2:nil}",
                 "}",
                 "${0}",
-            ].join("\n"),
+            ]
+            .join("\n"),
         ),
     ]
 }
 
-fn snippet(label: &str, kind: CompletionItemKind, detail: &str, sort_prefix: &str, text: &str) -> CompletionItem {
+fn snippet(
+    label: &str,
+    kind: CompletionItemKind,
+    detail: &str,
+    sort_prefix: &str,
+    text: &str,
+) -> CompletionItem {
     CompletionItem {
         label: label.to_string(),
         kind: Some(kind),

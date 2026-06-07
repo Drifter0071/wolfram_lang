@@ -1,22 +1,22 @@
 #![allow(deprecated)]
-pub mod lexer;
-pub mod ast;
-pub mod parser;
-pub mod generator;
-pub mod roblox_config;
-pub mod rojo_config;
-pub mod roblox_context;
-pub mod roblox_api;
 pub mod analyze;
-pub mod scope;
-pub mod typeck;
+pub mod ast;
+pub mod generator;
+pub mod lexer;
 pub mod lsp;
 pub mod luau_checker;
+pub mod parser;
+pub mod roblox_api;
+pub mod roblox_config;
+pub mod roblox_context;
+pub mod rojo_config;
+pub mod scope;
+pub mod typeck;
 
-use logos::Logos;
-use lexer::Token;
-use parser::Parser;
 use generator::generate;
+use lexer::Token;
+use logos::Logos;
+use parser::Parser;
 use roblox_config::RobloxProjectConfig;
 use rojo_config::RojoPathMapping;
 use scope::ScopeAnalysis;
@@ -50,10 +50,12 @@ pub fn check_types(source_code: &str) -> Vec<String> {
     match parser.parse_program() {
         Ok(ast) => {
             let tc = typeck::check_types(&ast);
-            let mut msgs: Vec<String> = tc.errors.into_iter()
-                .map(|e| format!("error: {}", e)).collect();
-            msgs.extend(tc.warnings.into_iter()
-                .map(|w| format!("warning: {}", w)));
+            let mut msgs: Vec<String> = tc
+                .errors
+                .into_iter()
+                .map(|e| format!("error: {}", e))
+                .collect();
+            msgs.extend(tc.warnings.into_iter().map(|w| format!("warning: {}", w)));
             msgs
         }
         Err(_) => vec![],
@@ -80,7 +82,15 @@ pub fn transpile_roblox(
     rojo_mappings: Option<&[RojoPathMapping]>,
     out_dir: &str,
 ) -> Result<String, String> {
-    transpile_inner(source_code, file_path, true, config, Some(importing_file), rojo_mappings, out_dir)
+    transpile_inner(
+        source_code,
+        file_path,
+        true,
+        config,
+        Some(importing_file),
+        rojo_mappings,
+        out_dir,
+    )
 }
 
 fn transpile_inner(
@@ -123,7 +133,9 @@ fn transpile_inner(
 
     // If errors exist, halt the pipeline
     if validation.has_errors() {
-        let err_msgs: Vec<String> = validation.errors.iter()
+        let err_msgs: Vec<String> = validation
+            .errors
+            .iter()
             .map(|d| format!("  line {}:{} — {}", d.line, d.column, d.message))
             .collect();
         return Err(format!(
@@ -135,12 +147,25 @@ fn transpile_inner(
     }
 
     // Generate Luau output
-    let mut output = generate(&ast, roblox_mode, config, importing_file, rojo_mappings, out_dir);
+    let mut output = generate(
+        &ast,
+        roblox_mode,
+        config,
+        importing_file,
+        rojo_mappings,
+        out_dir,
+    );
 
     // Prepend validation warnings as comments (for developer visibility)
     if !validation.warnings.is_empty() {
-        let warn_header = format!("-- Luau Checker: {} warning(s) in '{}'\n", validation.warnings.len(), file_path);
-        let warn_lines: Vec<String> = validation.warnings.iter()
+        let warn_header = format!(
+            "-- Luau Checker: {} warning(s) in '{}'\n",
+            validation.warnings.len(),
+            file_path
+        );
+        let warn_lines: Vec<String> = validation
+            .warnings
+            .iter()
             .map(|d| format!("--   line {}:{} — {}\n", d.line, d.column, d.message))
             .collect();
         let warn_block = format!("{}{}", warn_header, warn_lines.concat());
@@ -219,7 +244,11 @@ pub fn transpile_with_cache(
     }
 
     // Generate Luau with line mapping
-    let out_dir = if importing_file.is_some() { "out" } else { "out" };
+    let out_dir = if importing_file.is_some() {
+        "out"
+    } else {
+        "out"
+    };
     let luau = generate(
         &ast,
         roblox_mode,

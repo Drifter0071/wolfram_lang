@@ -1,5 +1,5 @@
+use crate::ast::{CompGenerator, Expr, Span, Stmt, StructField, TableField};
 use crate::lexer::Token;
-use crate::ast::{Span, TableField, Expr, Stmt, StructField, CompGenerator};
 
 // ==========================================
 // 3. THE PARSER (Recursive Descent with Precedence)
@@ -13,7 +13,12 @@ pub struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     pub fn new(tokens: Vec<Token>, spans: Vec<usize>, source: &'a str) -> Self {
-        Self { tokens, pos: 0, source, spans }
+        Self {
+            tokens,
+            pos: 0,
+            source,
+            spans,
+        }
     }
 
     fn current_offset(&self) -> usize {
@@ -29,7 +34,12 @@ impl<'a> Parser<'a> {
     }
 
     fn err_expected(&self, expected: &str, found: &dyn std::fmt::Debug) -> String {
-        format!("{}: expected {}, found {:?}", self.pos_string(), expected, found)
+        format!(
+            "{}: expected {}, found {:?}",
+            self.pos_string(),
+            expected,
+            found
+        )
     }
 
     fn err_msg(&self, msg: &str) -> String {
@@ -56,17 +66,35 @@ impl<'a> Parser<'a> {
     }
 
     fn is_stmt_start(tok: Option<&Token>) -> bool {
-        matches!(tok,
-            Some(Token::If) | Some(Token::While) | Some(Token::For) | Some(Token::Return)
-            | Some(Token::Function) | Some(Token::Class) | Some(Token::EnumKw)
-            | Some(Token::StructKw) | Some(Token::Import) | Some(Token::Local)
-            | Some(Token::Public) | Some(Token::Private) | Some(Token::Break)
-            | Some(Token::Continue)
-            | Some(Token::Ident(_)) | Some(Token::True) | Some(Token::False)
-            | Some(Token::Nil) | Some(Token::SelfKw) | Some(Token::Not)
-            | Some(Token::Minus) | Some(Token::LParen) | Some(Token::LBracket)
-            | Some(Token::LBrace) | Some(Token::Number(_)) | Some(Token::StringLit(_))
-            | Some(Token::FString(_))
+        matches!(
+            tok,
+            Some(Token::If)
+                | Some(Token::While)
+                | Some(Token::For)
+                | Some(Token::Return)
+                | Some(Token::Function)
+                | Some(Token::Class)
+                | Some(Token::EnumKw)
+                | Some(Token::StructKw)
+                | Some(Token::Import)
+                | Some(Token::Local)
+                | Some(Token::Public)
+                | Some(Token::Private)
+                | Some(Token::Break)
+                | Some(Token::Continue)
+                | Some(Token::Ident(_))
+                | Some(Token::True)
+                | Some(Token::False)
+                | Some(Token::Nil)
+                | Some(Token::SelfKw)
+                | Some(Token::Not)
+                | Some(Token::Minus)
+                | Some(Token::LParen)
+                | Some(Token::LBracket)
+                | Some(Token::LBrace)
+                | Some(Token::Number(_))
+                | Some(Token::StringLit(_))
+                | Some(Token::FString(_))
         )
     }
 
@@ -75,7 +103,10 @@ impl<'a> Parser<'a> {
             self.advance();
             return Ok(());
         }
-        if self.peek() == Some(&Token::RBrace) || self.peek().is_none() || Self::is_stmt_start(self.peek()) {
+        if self.peek() == Some(&Token::RBrace)
+            || self.peek().is_none()
+            || Self::is_stmt_start(self.peek())
+        {
             return Ok(());
         }
         Err(self.err_expected("';' or end of statement", &self.peek()))
@@ -125,12 +156,16 @@ impl<'a> Parser<'a> {
             Some(Token::Break) => {
                 self.advance();
                 self.semicolon_or_end()?;
-                Ok(Stmt::Break { span: Span::default() })
+                Ok(Stmt::Break {
+                    span: Span::default(),
+                })
             }
             Some(Token::Continue) => {
                 self.advance();
                 self.semicolon_or_end()?;
-                Ok(Stmt::Continue { span: Span::default() })
+                Ok(Stmt::Continue {
+                    span: Span::default(),
+                })
             }
             Some(Token::Public) | Some(Token::Private) => self.parse_modifier_stmt(),
             Some(Token::At) => self.parse_decorated_stmt(),
@@ -181,7 +216,9 @@ impl<'a> Parser<'a> {
                 }
                 Ok(stmt)
             }
-            _ => Err(self.err_msg("Expected 'local', 'function', 'class', 'enum', or 'struct' after access modifier")),
+            _ => Err(self.err_msg(
+                "Expected 'local', 'function', 'class', 'enum', or 'struct' after access modifier",
+            )),
         }
     }
 
@@ -218,7 +255,10 @@ impl<'a> Parser<'a> {
         self.expect(Token::RParen)?;
         let block = self.parse_block()?;
         Ok(Stmt::FuncDef {
-            name, params, param_defaults, block,
+            name,
+            params,
+            param_defaults,
+            block,
             access: "private".into(),
             is_async: false,
             span: Span::default(),
@@ -279,7 +319,11 @@ impl<'a> Parser<'a> {
         let cond = self.parse_expr()?;
         self.expect(Token::RParen)?;
         let block = self.parse_block()?;
-        Ok(Stmt::While { cond, block, span: Span::default() })
+        Ok(Stmt::While {
+            cond,
+            block,
+            span: Span::default(),
+        })
     }
 
     fn parse_for(&mut self) -> Result<Stmt, String> {
@@ -291,7 +335,12 @@ impl<'a> Parser<'a> {
         self.expect(Token::In)?;
         let iter = self.parse_expr()?;
         let block = self.parse_block()?;
-        Ok(Stmt::For { var, iter, block, span: Span::default() })
+        Ok(Stmt::For {
+            var,
+            iter,
+            block,
+            span: Span::default(),
+        })
     }
 
     fn parse_return(&mut self) -> Result<Stmt, String> {
@@ -301,7 +350,10 @@ impl<'a> Parser<'a> {
             value = Some(self.parse_expr()?);
         }
         self.semicolon_or_end()?;
-        Ok(Stmt::Return { value, span: Span::default() })
+        Ok(Stmt::Return {
+            value,
+            span: Span::default(),
+        })
     }
 
     fn parse_function(&mut self) -> Result<Stmt, String> {
@@ -324,7 +376,15 @@ impl<'a> Parser<'a> {
         let (params, param_defaults) = self.parse_param_list()?;
         self.expect(Token::RParen)?;
         let block = self.parse_block()?;
-        Ok(Stmt::FuncDef { name, params, param_defaults, block, access: "private".into(), is_async, span: Span::default() })
+        Ok(Stmt::FuncDef {
+            name,
+            params,
+            param_defaults,
+            block,
+            access: "private".into(),
+            is_async,
+            span: Span::default(),
+        })
     }
 
     fn parse_param_list(&mut self) -> Result<(Vec<String>, Vec<Option<Expr>>), String> {
@@ -372,7 +432,12 @@ impl<'a> Parser<'a> {
             _ => return Err(self.err_msg("Expected class name")),
         };
         let body = self.parse_block()?;
-        Ok(Stmt::ClassDef { name, body, access: "private".into(), span: Span::default() })
+        Ok(Stmt::ClassDef {
+            name,
+            body,
+            access: "private".into(),
+            span: Span::default(),
+        })
     }
 
     fn parse_enum(&mut self) -> Result<Stmt, String> {
@@ -402,7 +467,12 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(Token::RBrace)?;
-        Ok(Stmt::EnumDef { name, variants, access: "private".into(), span: Span::default() })
+        Ok(Stmt::EnumDef {
+            name,
+            variants,
+            access: "private".into(),
+            span: Span::default(),
+        })
     }
 
     fn parse_struct(&mut self) -> Result<Stmt, String> {
@@ -422,7 +492,9 @@ impl<'a> Parser<'a> {
             }
             while self.peek() == Some(&Token::Comma) {
                 self.advance();
-                if self.peek() == Some(&Token::RBrace) { break; }
+                if self.peek() == Some(&Token::RBrace) {
+                    break;
+                }
                 if let Some(Token::Ident(f)) = self.advance() {
                     let field = self.parse_struct_field(f)?;
                     fields.push(field);
@@ -432,7 +504,12 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(Token::RBrace)?;
-        Ok(Stmt::StructDef { name, fields, access: "private".into(), span: Span::default() })
+        Ok(Stmt::StructDef {
+            name,
+            fields,
+            access: "private".into(),
+            span: Span::default(),
+        })
     }
 
     fn parse_struct_field(&mut self, name: String) -> Result<StructField, String> {
@@ -442,9 +519,15 @@ impl<'a> Parser<'a> {
                 Some(Token::Ident(t)) => t,
                 _ => return Err(self.err_msg("Expected type after colon in struct field")),
             };
-            Ok(StructField { name, field_type: Some(type_name) })
+            Ok(StructField {
+                name,
+                field_type: Some(type_name),
+            })
         } else {
-            Ok(StructField { name, field_type: None })
+            Ok(StructField {
+                name,
+                field_type: None,
+            })
         }
     }
 
@@ -467,7 +550,11 @@ impl<'a> Parser<'a> {
             _ => return Err(self.err_msg("Expected identifier for import alias")),
         };
         self.semicolon_or_end()?;
-        Ok(Stmt::Import { path, alias, span: Span::default() })
+        Ok(Stmt::Import {
+            path,
+            alias,
+            span: Span::default(),
+        })
     }
 
     fn parse_try_catch(&mut self) -> Result<Stmt, String> {
@@ -502,7 +589,12 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        Ok(Stmt::TryCatch { try_block, catch_clauses, finally_block, span: Span::default() })
+        Ok(Stmt::TryCatch {
+            try_block,
+            catch_clauses,
+            finally_block,
+            span: Span::default(),
+        })
     }
 
     fn parse_decorated_stmt(&mut self) -> Result<Stmt, String> {
@@ -516,7 +608,11 @@ impl<'a> Parser<'a> {
             decorators.push(name);
         }
         let stmt = Box::new(self.parse_stmt()?);
-        Ok(Stmt::DecoratedStmt { decorators, stmt, span: Span::default() })
+        Ok(Stmt::DecoratedStmt {
+            decorators,
+            stmt,
+            span: Span::default(),
+        })
     }
 
     fn parse_expr_stmt(&mut self) -> Result<Stmt, String> {
@@ -555,7 +651,10 @@ impl<'a> Parser<'a> {
             })
         } else {
             self.semicolon_or_end()?;
-            Ok(Stmt::ExprStmt { expr, span: Span::default() })
+            Ok(Stmt::ExprStmt {
+                expr,
+                span: Span::default(),
+            })
         }
     }
 
@@ -682,7 +781,11 @@ impl<'a> Parser<'a> {
 
         loop {
             match self.peek() {
-                Some(Token::StarStar) | Some(Token::SlashSlash) | Some(Token::Star) | Some(Token::Slash) | Some(Token::Percent) => {
+                Some(Token::StarStar)
+                | Some(Token::SlashSlash)
+                | Some(Token::Star)
+                | Some(Token::Slash)
+                | Some(Token::Percent) => {
                     let op = match self.advance().unwrap() {
                         Token::StarStar => "^",
                         Token::SlashSlash => "//",
@@ -758,10 +861,11 @@ impl<'a> Parser<'a> {
                 Some(Token::Dot) | Some(Token::Colon) => {
                     let is_colon = matches!(self.peek(), Some(Token::Colon));
                     if is_colon {
-                        let is_method_call = match (self.tokens.get(self.pos + 1), self.tokens.get(self.pos + 2)) {
-                            (Some(Token::Ident(_)), Some(Token::LParen)) => true,
-                            _ => false,
-                        };
+                        let is_method_call =
+                            match (self.tokens.get(self.pos + 1), self.tokens.get(self.pos + 2)) {
+                                (Some(Token::Ident(_)), Some(Token::LParen)) => true,
+                                _ => false,
+                            };
                         if !is_method_call {
                             break;
                         }
@@ -809,7 +913,9 @@ impl<'a> Parser<'a> {
 
             Some(Token::LParen) => {
                 // Try to detect arrow function: (params) -> expr
-                let is_arrow = self.peek().map_or(false, |t| matches!(t, Token::Ident(_) | Token::RParen));
+                let is_arrow = self
+                    .peek()
+                    .map_or(false, |t| matches!(t, Token::Ident(_) | Token::RParen));
                 if is_arrow {
                     let save_pos = self.pos;
                     let (params, _param_defaults) = self.parse_param_list()?;
@@ -821,9 +927,15 @@ impl<'a> Parser<'a> {
                                 self.parse_block()?
                             } else {
                                 let expr = self.parse_expr()?;
-                                vec![Stmt::Return { value: Some(expr), span: Span::default() }]
+                                vec![Stmt::Return {
+                                    value: Some(expr),
+                                    span: Span::default(),
+                                }]
                             };
-                            return Ok(Expr::Function { params, block: body });
+                            return Ok(Expr::Function {
+                                params,
+                                block: body,
+                            });
                         }
                     }
                     // Not an arrow function — restore and parse as grouping
@@ -844,7 +956,11 @@ impl<'a> Parser<'a> {
                         self.advance();
                         let var = match self.advance() {
                             Some(Token::Ident(n)) => n,
-                            _ => return Err(self.err_msg("Expected variable name in list comprehension")),
+                            _ => {
+                                return Err(
+                                    self.err_msg("Expected variable name in list comprehension")
+                                )
+                            }
                         };
                         self.expect(Token::In)?;
                         let iter = self.parse_expr()?;
@@ -856,7 +972,11 @@ impl<'a> Parser<'a> {
                         } else {
                             None
                         };
-                        generators.push(CompGenerator { var, iter, condition });
+                        generators.push(CompGenerator {
+                            var,
+                            iter,
+                            condition,
+                        });
 
                         self.expect(Token::RBracket)?;
                         return Ok(Expr::ListComp {
@@ -883,7 +1003,9 @@ impl<'a> Parser<'a> {
                     fields.push(self.parse_table_field()?);
                     while self.peek() == Some(&Token::Comma) {
                         self.advance();
-                        if self.peek() == Some(&Token::RBrace) { break; }
+                        if self.peek() == Some(&Token::RBrace) {
+                            break;
+                        }
                         fields.push(self.parse_table_field()?);
                     }
                 }

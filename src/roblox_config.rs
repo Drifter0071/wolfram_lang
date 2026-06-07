@@ -24,10 +24,7 @@ pub struct ResolvedMapping {
     pub target_name: String,
 }
 
-pub fn resolve_target_path(
-    file_path: &str,
-    mappings: &[RobloxMapping],
-) -> Option<ResolvedMapping> {
+pub fn resolve_target_path(file_path: &str, mappings: &[RobloxMapping]) -> Option<ResolvedMapping> {
     let normalized = file_path.replace('\\', "/");
 
     for mapping in mappings {
@@ -52,11 +49,17 @@ pub fn resolve_target_path(
                 let name = name.strip_suffix(".wrm").unwrap_or(&name).to_string();
                 let name = name.strip_suffix(".shared").unwrap_or(&name).to_string();
 
-                let mut target_parts: Vec<String> = mapping.target.split('.').map(|s| s.to_string()).collect();
+                let mut target_parts: Vec<String> =
+                    mapping.target.split('.').map(|s| s.to_string()).collect();
                 let subdir = if let Some(slash) = rest.rfind('/') {
                     let dir_part = &rest[..slash];
                     if !dir_part.is_empty() {
-                        Some(dir_part.split('/').map(|s| s.to_string()).collect::<Vec<_>>())
+                        Some(
+                            dir_part
+                                .split('/')
+                                .map(|s| s.to_string())
+                                .collect::<Vec<_>>(),
+                        )
                     } else {
                         None
                     }
@@ -77,9 +80,15 @@ pub fn resolve_target_path(
             }
         } else {
             if normalized == source || normalized == format!("{}.wrm", source) {
-                let target_parts: Vec<String> = mapping.target.split('.').map(|s| s.to_string()).collect();
-                let name = normalized.rsplit('/').next().unwrap_or(&normalized)
-                    .strip_suffix(".wrm").unwrap_or(&normalized).to_string();
+                let target_parts: Vec<String> =
+                    mapping.target.split('.').map(|s| s.to_string()).collect();
+                let name = normalized
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&normalized)
+                    .strip_suffix(".wrm")
+                    .unwrap_or(&normalized)
+                    .to_string();
                 let name = name.strip_suffix(".shared").unwrap_or(&name).to_string();
                 return Some(ResolvedMapping {
                     target_instance: target_parts,
@@ -97,7 +106,9 @@ fn normalize_path(path: &str) -> String {
     for seg in path.split('/') {
         match seg {
             "" | "." => continue,
-            ".." => { parts.pop(); }
+            ".." => {
+                parts.pop();
+            }
             _ => parts.push(seg),
         }
     }
@@ -134,7 +145,10 @@ pub fn resolve_import(
             resolve_target_path(&normalized_current, mappings),
             resolve_target_path(&with_ext, mappings),
         ) {
-            return Some(build_require_path(&current_target.target_instance, &import_target));
+            return Some(build_require_path(
+                &current_target.target_instance,
+                &import_target,
+            ));
         }
     }
 
@@ -142,7 +156,10 @@ pub fn resolve_import(
         resolve_target_path(&normalized_current, mappings)?,
         resolve_target_path(&resolved, mappings)?,
     );
-    Some(build_require_path(&current_target.target_instance, &import_target))
+    Some(build_require_path(
+        &current_target.target_instance,
+        &import_target,
+    ))
 }
 
 fn build_require_path(current: &[String], imported: &ResolvedMapping) -> String {
@@ -156,10 +173,7 @@ fn build_require_path(current: &[String], imported: &ResolvedMapping) -> String 
     }
 }
 
-pub fn resolve_project_import(
-    import_path: &str,
-    mappings: &[RobloxMapping],
-) -> Option<String> {
+pub fn resolve_project_import(import_path: &str, mappings: &[RobloxMapping]) -> Option<String> {
     let clean = import_path.trim_start_matches("./").trim_start_matches('/');
     let candidates = vec![
         format!("src/{}.wrm", clean),

@@ -11,7 +11,9 @@ fn main() {
     let is_lsp = args.iter().any(|a| a == "lsp");
 
     if is_lsp {
-        let bindings_path = args.iter().position(|a| a == "--bindings")
+        let bindings_path = args
+            .iter()
+            .position(|a| a == "--bindings")
             .and_then(|i| args.get(i + 1))
             .map(|s| s.as_str());
         if let Err(e) = wolfram::lsp::run(bindings_path) {
@@ -20,7 +22,11 @@ fn main() {
         return;
     }
 
-    let pos_args: Vec<&String> = args.iter().skip(1).filter(|a| !a.starts_with('-')).collect();
+    let pos_args: Vec<&String> = args
+        .iter()
+        .skip(1)
+        .filter(|a| !a.starts_with('-'))
+        .collect();
 
     if pos_args.is_empty() {
         cli::print_usage();

@@ -176,7 +176,9 @@ impl Bindings {
     }
 
     pub fn get_global(&self, name: &str) -> Option<&WoldGlobal> {
-        self.globals.iter().find(|g| g.name.eq_ignore_ascii_case(name))
+        self.globals
+            .iter()
+            .find(|g| g.name.eq_ignore_ascii_case(name))
     }
 
     pub fn get_all_methods(&self, type_name: &str) -> Vec<&WoldMethod> {
@@ -203,7 +205,11 @@ impl Bindings {
 
     pub fn get_method_return(&self, type_name: &str, method_name: &str) -> Option<String> {
         if let Some(t) = self.get_type(type_name) {
-            if let Some(m) = t.methods.iter().find(|m| m.name.eq_ignore_ascii_case(method_name)) {
+            if let Some(m) = t
+                .methods
+                .iter()
+                .find(|m| m.name.eq_ignore_ascii_case(method_name))
+            {
                 return Some(m.returns.clone());
             }
             if let Some(parent) = &t.extends {

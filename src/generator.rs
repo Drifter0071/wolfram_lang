@@ -1,5 +1,7 @@
-use crate::ast::{TableField, Expr, Stmt};
-use crate::roblox_config::{RobloxProjectConfig, resolve_import, resolve_project_import, extract_service_name};
+use crate::ast::{Expr, Stmt, TableField};
+use crate::roblox_config::{
+    extract_service_name, resolve_import, resolve_project_import, RobloxProjectConfig,
+};
 use crate::rojo_config::RojoPathMapping;
 use std::collections::HashSet;
 
@@ -30,22 +32,73 @@ struct GenContext {
 }
 
 const ROBLOX_GLOBALS: &[&str] = &[
-    "game", "workspace", "script", "Players", "ReplicatedStorage",
-    "ServerScriptService", "ServerStorage", "StarterPlayer", "StarterGui",
-    "Lighting", "SoundService", "RunService", "UserInputService",
-    "ContextActionService", "TweenService", "CollectionService",
-    "HttpService", "TeleportService", "MarketplaceService",
-    "DataStoreService", "MessagingService", "PathfindingService",
-    "PhysicsService", "Teams", "Chat", "LocalizationService",
-    "SocialService", "VRService", "GroupService", "PolicyService",
-    "AnalyticsService", "AvatarEditorService", "BadgeService",
-    "MemoryStoreService", "TextService", "GuiService", "HapticService",
-    "Instance", "Vector3", "Vector2", "CFrame", "UDim2", "UDim",
-    "Color3", "BrickColor", "TweenInfo", "RaycastParams", "Region3",
-    "Rect", "NumberRange", "NumberSequence", "ColorSequence",
-    "Enum", "Axes", "Faces", "PhysicalProperties", "Random",
-    "math", "string", "table", "os", "task", "coroutine", "debug",
-    "utf8", "bit32", "buffer",
+    "game",
+    "workspace",
+    "script",
+    "Players",
+    "ReplicatedStorage",
+    "ServerScriptService",
+    "ServerStorage",
+    "StarterPlayer",
+    "StarterGui",
+    "Lighting",
+    "SoundService",
+    "RunService",
+    "UserInputService",
+    "ContextActionService",
+    "TweenService",
+    "CollectionService",
+    "HttpService",
+    "TeleportService",
+    "MarketplaceService",
+    "DataStoreService",
+    "MessagingService",
+    "PathfindingService",
+    "PhysicsService",
+    "Teams",
+    "Chat",
+    "LocalizationService",
+    "SocialService",
+    "VRService",
+    "GroupService",
+    "PolicyService",
+    "AnalyticsService",
+    "AvatarEditorService",
+    "BadgeService",
+    "MemoryStoreService",
+    "TextService",
+    "GuiService",
+    "HapticService",
+    "Instance",
+    "Vector3",
+    "Vector2",
+    "CFrame",
+    "UDim2",
+    "UDim",
+    "Color3",
+    "BrickColor",
+    "TweenInfo",
+    "RaycastParams",
+    "Region3",
+    "Rect",
+    "NumberRange",
+    "NumberSequence",
+    "ColorSequence",
+    "Enum",
+    "Axes",
+    "Faces",
+    "PhysicalProperties",
+    "Random",
+    "math",
+    "string",
+    "table",
+    "os",
+    "task",
+    "coroutine",
+    "debug",
+    "utf8",
+    "bit32",
+    "buffer",
 ];
 
 impl GenContext {
@@ -95,9 +148,15 @@ impl GenContext {
                 }
             }
             if let Some(ref mappings) = self.rojo_mappings {
-                let src_import = format!("src/{}", import_path.trim_start_matches("./").trim_start_matches('/'));
+                let src_import = format!(
+                    "src/{}",
+                    import_path.trim_start_matches("./").trim_start_matches('/')
+                );
                 if let Some((require_path, service)) = RojoPathMapping::resolve_import_to_require(
-                    mappings, &src_import, import_path, &self.out_dir,
+                    mappings,
+                    &src_import,
+                    import_path,
+                    &self.out_dir,
                 ) {
                     if service != "script" && !self.services.contains(&service) {
                         self.services.push(service.clone());
@@ -117,7 +176,10 @@ impl GenContext {
         // Try Rojo relative resolution
         if let Some(ref mappings) = self.rojo_mappings {
             if let Some((require_path, service)) = RojoPathMapping::resolve_import_to_require(
-                mappings, importing, import_path, &self.out_dir,
+                mappings,
+                importing,
+                import_path,
+                &self.out_dir,
             ) {
                 if service != "script" && !self.services.contains(&service) {
                     self.services.push(service.clone());
@@ -153,7 +215,11 @@ fn infer_expr_type(expr: &Expr, ctx: &GenContext) -> InferredType {
         Expr::Function { .. } => InferredType::Unknown,
         Expr::AwaitExpr(_) => InferredType::Unknown,
         Expr::ListComp { .. } => InferredType::Array,
-        Expr::Ternary { then_expr, else_expr, .. } => {
+        Expr::Ternary {
+            then_expr,
+            else_expr,
+            ..
+        } => {
             let t_type = infer_expr_type(then_expr, ctx);
             let e_type = infer_expr_type(else_expr, ctx);
             if t_type == e_type {
@@ -190,7 +256,9 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                 .unwrap_or_default();
             format!("{}local {}{}\n", ind, name, val_str)
         }
-        Stmt::Assign { target, value, op, .. } => {
+        Stmt::Assign {
+            target, value, op, ..
+        } => {
             let inferred_type = infer_expr_type(value, ctx);
             if let Expr::Ident(name) = target {
                 ctx.declare_var(name.clone(), inferred_type);
@@ -229,7 +297,11 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
             ctx.pop_scope();
             for (ei_cond, ei_block) in else_if_blocks {
                 ctx.push_scope();
-                s.push_str(&format!("{}elseif {} then\n", ind, generate_expr(ei_cond, ctx)));
+                s.push_str(&format!(
+                    "{}elseif {} then\n",
+                    ind,
+                    generate_expr(ei_cond, ctx)
+                ));
                 for b in ei_block {
                     s.push_str(&generate_stmt(b, indent + 1, ctx));
                 }
@@ -256,7 +328,9 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
             s.push_str(&format!("{}end\n", ind));
             s
         }
-        Stmt::For { var, iter, block, .. } => {
+        Stmt::For {
+            var, iter, block, ..
+        } => {
             ctx.push_scope();
             let mut s = String::new();
             let is_range = if let Expr::Call { func, .. } = iter {
@@ -346,7 +420,13 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
             for (i, default) in param_defaults.iter().enumerate() {
                 if let Some(default_expr) = default {
                     let pname = &params[i];
-                    s.push_str(&format!("{}    if {} == nil then {} = {}\n", ind, pname, pname, generate_expr(default_expr, ctx)));
+                    s.push_str(&format!(
+                        "{}    if {} == nil then {} = {}\n",
+                        ind,
+                        pname,
+                        pname,
+                        generate_expr(default_expr, ctx)
+                    ));
                 }
             }
             for b in block {
@@ -366,11 +446,18 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
         }
         Stmt::Break { .. } => format!("{}break\n", ind),
         Stmt::Continue { .. } => format!("{}continue\n", ind),
-        Stmt::TryCatch { try_block, catch_clauses, finally_block, .. } => {
+        Stmt::TryCatch {
+            try_block,
+            catch_clauses,
+            finally_block,
+            ..
+        } => {
             let mut s = String::new();
             let fn_name = format!("__try_{}", ind.len());
             s.push_str(&format!("{}local function {}()\n", ind, fn_name));
-            for b in try_block { s.push_str(&generate_stmt(b, indent + 1, ctx)); }
+            for b in try_block {
+                s.push_str(&generate_stmt(b, indent + 1, ctx));
+            }
             s.push_str(&format!("{}end\n", ind));
             s.push_str(&format!("{}local ok, err = pcall({})\n", ind, fn_name));
             for (i, (_type_name, var_name, block)) in catch_clauses.iter().enumerate() {
@@ -382,14 +469,22 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                 }
                 let bind_line = if var_name.is_some() {
                     format!("{}    local {} = err\n", ind, binding)
-                } else { String::new() };
+                } else {
+                    String::new()
+                };
                 s.push_str(&bind_line);
-                for b in block { s.push_str(&generate_stmt(b, indent + 1, ctx)); }
+                for b in block {
+                    s.push_str(&generate_stmt(b, indent + 1, ctx));
+                }
             }
-            if !catch_clauses.is_empty() { s.push_str(&format!("{}end\n", ind)); }
+            if !catch_clauses.is_empty() {
+                s.push_str(&format!("{}end\n", ind));
+            }
             if let Some(finally) = finally_block {
                 s.push_str(&format!("{}do\n", ind));
-                for b in finally { s.push_str(&generate_stmt(b, indent + 1, ctx)); }
+                for b in finally {
+                    s.push_str(&generate_stmt(b, indent + 1, ctx));
+                }
                 s.push_str(&format!("{}end\n", ind));
             }
             s
@@ -434,9 +529,9 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                 services: Vec::new(),
             };
 
-            let has_init = body.iter().any(|b| {
-                matches!(b, Stmt::FuncDef { name: m_name, .. } if m_name == "init")
-            });
+            let has_init = body
+                .iter()
+                .any(|b| matches!(b, Stmt::FuncDef { name: m_name, .. } if m_name == "init"));
 
             let mut s = String::new();
             s.push_str(&format!("-- Auto-generated Class: {}\n", name));
@@ -558,10 +653,7 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                 .map(|f| format!("{} = {}", f, f))
                 .collect();
             let mut s = format!("{}local {} = {{}}\n", ind, name);
-            s.push_str(&format!(
-                "{}function {}.new({})\n",
-                ind, name, params
-            ));
+            s.push_str(&format!("{}function {}.new({})\n", ind, name, params));
             s.push_str(&format!(
                 "{}    return {{{}}}\n",
                 ind,
@@ -580,7 +672,11 @@ fn is_simple_chain_root(expr: &Expr) -> bool {
 fn generate_safe_member_chain(expr: &Expr, ctx: &GenContext) -> String {
     fn collect_member_parts(expr: &Expr, ctx: &GenContext) -> (Vec<String>, String) {
         match expr {
-            Expr::Member { obj, field, is_colon } => {
+            Expr::Member {
+                obj,
+                field,
+                is_colon,
+            } => {
                 let (mut parts, root) = collect_member_parts(obj, ctx);
                 let sep = if *is_colon { ":" } else { "." };
                 let last = parts.last().unwrap().clone();
@@ -700,7 +796,12 @@ fn generate_expr_impl(expr: &Expr, ctx: &GenContext, safe_chain: bool) -> String
                 return generate_safe_member_chain(expr, ctx);
             }
             let sep = if *is_colon { ":" } else { "." };
-            format!("{}{}{}", generate_expr_impl(obj, ctx, safe_chain), sep, field)
+            format!(
+                "{}{}{}",
+                generate_expr_impl(obj, ctx, safe_chain),
+                sep,
+                field
+            )
         }
         Expr::Binary { left, op, right } => {
             if op == "==" {
@@ -717,7 +818,11 @@ fn generate_expr_impl(expr: &Expr, ctx: &GenContext, safe_chain: bool) -> String
                 generate_expr(right, ctx)
             )
         }
-        Expr::Ternary { cond, then_expr, else_expr } => {
+        Expr::Ternary {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
             format!(
                 "(if {} then {} else {})",
                 generate_expr(cond, ctx),
@@ -764,25 +869,52 @@ fn generate_expr_impl(expr: &Expr, ctx: &GenContext, safe_chain: bool) -> String
             for gen in generators {
                 let is_range = if let Expr::Call { func, .. } = &gen.iter {
                     func == "range"
-                } else { false };
+                } else {
+                    false
+                };
                 if is_range {
                     if let Expr::Call { args, .. } = &gen.iter {
                         match args.len() {
-                            1 => s.push_str(&format!("    for {} = 0, {} - 1 do\n", gen.var, generate_expr(&args[0], ctx))),
-                            2 => s.push_str(&format!("    for {} = {}, {} - 1 do\n", gen.var, generate_expr(&args[0], ctx), generate_expr(&args[1], ctx))),
-                            3 => s.push_str(&format!("    for {} = {}, {} - 1, {} do\n", gen.var, generate_expr(&args[0], ctx), generate_expr(&args[1], ctx), generate_expr(&args[2], ctx))),
+                            1 => s.push_str(&format!(
+                                "    for {} = 0, {} - 1 do\n",
+                                gen.var,
+                                generate_expr(&args[0], ctx)
+                            )),
+                            2 => s.push_str(&format!(
+                                "    for {} = {}, {} - 1 do\n",
+                                gen.var,
+                                generate_expr(&args[0], ctx),
+                                generate_expr(&args[1], ctx)
+                            )),
+                            3 => s.push_str(&format!(
+                                "    for {} = {}, {} - 1, {} do\n",
+                                gen.var,
+                                generate_expr(&args[0], ctx),
+                                generate_expr(&args[1], ctx),
+                                generate_expr(&args[2], ctx)
+                            )),
                             _ => s.push_str("    -- Invalid range\n"),
                         }
                     }
                 } else {
-                    s.push_str(&format!("    for _, {} in ipairs({}) do\n", gen.var, generate_expr(&gen.iter, ctx)));
+                    s.push_str(&format!(
+                        "    for _, {} in ipairs({}) do\n",
+                        gen.var,
+                        generate_expr(&gen.iter, ctx)
+                    ));
                 }
                 if let Some(ref cond) = gen.condition {
                     s.push_str(&format!("        if {} then\n", generate_expr(cond, ctx)));
-                    s.push_str(&format!("            table.insert(_result, {})\n", generate_expr(elt, ctx)));
+                    s.push_str(&format!(
+                        "            table.insert(_result, {})\n",
+                        generate_expr(elt, ctx)
+                    ));
                     s.push_str("        end\n");
                 } else {
-                    s.push_str(&format!("        table.insert(_result, {})\n", generate_expr(elt, ctx)));
+                    s.push_str(&format!(
+                        "        table.insert(_result, {})\n",
+                        generate_expr(elt, ctx)
+                    ));
                 }
                 s.push_str("    end\n");
             }

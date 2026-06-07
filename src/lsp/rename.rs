@@ -1,5 +1,5 @@
-use lsp_types::*;
 use crate::lsp::store::DocumentStore;
+use lsp_types::*;
 
 pub fn handle_prepare_rename(
     store: &mut DocumentStore,
@@ -15,8 +15,8 @@ pub fn handle_prepare_rename(
     }
 
     // Check if word is a declared symbol
-    let symbol_exists = doc.symbols.iter().any(|s| s.name == word)
-        || doc.scope.variables.contains_key(&word);
+    let symbol_exists =
+        doc.symbols.iter().any(|s| s.name == word) || doc.scope.variables.contains_key(&word);
 
     if !symbol_exists {
         return None;
@@ -27,10 +27,7 @@ pub fn handle_prepare_rename(
     Some(PrepareRenameResponse::Range(range))
 }
 
-pub fn handle_rename(
-    store: &mut DocumentStore,
-    params: RenameParams,
-) -> Option<WorkspaceEdit> {
+pub fn handle_rename(store: &mut DocumentStore, params: RenameParams) -> Option<WorkspaceEdit> {
     let uri = &params.text_document_position.text_document.uri;
     let pos = &params.text_document_position.position;
     let new_name = &params.new_name;
@@ -48,24 +45,35 @@ pub fn handle_rename(
     // Rename in current file
     let local_edits = find_occurrences(&doc.source, &old_name);
     if !local_edits.is_empty() {
-        let new_edits: Vec<TextEdit> = local_edits.into_iter().map(|e| TextEdit {
-            range: e,
-            new_text: new_name.clone(),
-        }).collect();
+        let new_edits: Vec<TextEdit> = local_edits
+            .into_iter()
+            .map(|e| TextEdit {
+                range: e,
+                new_text: new_name.clone(),
+            })
+            .collect();
         changes.push((uri.clone(), new_edits));
     }
 
     // Rename across workspace files (for public symbols)
-    let is_public = doc.symbols.iter().any(|s| s.name == old_name && s.access == "public");
+    let is_public = doc
+        .symbols
+        .iter()
+        .any(|s| s.name == old_name && s.access == "public");
     if is_public {
         for other_doc in store.get_all() {
-            if other_doc.uri == *uri { continue; }
+            if other_doc.uri == *uri {
+                continue;
+            }
             let edits = find_occurrences(&other_doc.source, &old_name);
             if !edits.is_empty() {
-                let new_edits: Vec<TextEdit> = edits.into_iter().map(|e| TextEdit {
-                    range: e,
-                    new_text: new_name.clone(),
-                }).collect();
+                let new_edits: Vec<TextEdit> = edits
+                    .into_iter()
+                    .map(|e| TextEdit {
+                        range: e,
+                        new_text: new_name.clone(),
+                    })
+                    .collect();
                 changes.push((other_doc.uri.clone(), new_edits));
             }
         }
@@ -92,8 +100,14 @@ fn find_occurrences(source: &str, word: &str) -> Vec<Range> {
             let after = line[abs + word.len()..].chars().next();
             if is_word_boundary(before) && is_word_boundary(after) {
                 ranges.push(Range {
-                    start: Position { line: line_idx as u32, character: abs as u32 },
-                    end: Position { line: line_idx as u32, character: (abs + word.len()) as u32 },
+                    start: Position {
+                        line: line_idx as u32,
+                        character: abs as u32,
+                    },
+                    end: Position {
+                        line: line_idx as u32,
+                        character: (abs + word.len()) as u32,
+                    },
                 });
             }
             start = abs + word.len();
@@ -106,10 +120,13 @@ fn extract_word_at(source: &str, pos: &Position) -> String {
     let lines: Vec<&str> = source.lines().collect();
     let line = lines.get(pos.line as usize).copied().unwrap_or("");
     let col = pos.character as usize;
-    if col >= line.len() { return String::new(); }
+    if col >= line.len() {
+        return String::new();
+    }
 
     let bytes = line.as_bytes();
-    let start = (0..=col).rev()
+    let start = (0..=col)
+        .rev()
         .find(|&i| i == 0 || !is_id_char(bytes[i - 1]))
         .unwrap_or(0);
     let end = (col..line.len())
@@ -126,8 +143,14 @@ fn word_range(source: &str, pos: &Position) -> Range {
     let col = pos.character as usize;
     let start = col.saturating_sub(word.len());
     Range {
-        start: Position { line: pos.line, character: start as u32 },
-        end: Position { line: pos.line, character: col as u32 },
+        start: Position {
+            line: pos.line,
+            character: start as u32,
+        },
+        end: Position {
+            line: pos.line,
+            character: col as u32,
+        },
     }
 }
 
@@ -143,9 +166,36 @@ fn is_word_boundary(c: Option<char>) -> bool {
 }
 
 fn is_keyword(word: &str) -> bool {
-    matches!(word, "if" | "else" | "elif" | "while" | "for" | "in" | "function"
-        | "class" | "struct" | "enum" | "import" | "as" | "local" | "return"
-        | "true" | "false" | "nil" | "self" | "break" | "continue"
-        | "and" | "or" | "not" | "public" | "private" | "try" | "catch"
-        | "finally" | "async" | "await")
+    matches!(
+        word,
+        "if" | "else"
+            | "elif"
+            | "while"
+            | "for"
+            | "in"
+            | "function"
+            | "class"
+            | "struct"
+            | "enum"
+            | "import"
+            | "as"
+            | "local"
+            | "return"
+            | "true"
+            | "false"
+            | "nil"
+            | "self"
+            | "break"
+            | "continue"
+            | "and"
+            | "or"
+            | "not"
+            | "public"
+            | "private"
+            | "try"
+            | "catch"
+            | "finally"
+            | "async"
+            | "await"
+    )
 }

@@ -73,10 +73,7 @@ pub fn extract_symbols(stmts: &[Stmt], source: &str) -> Vec<Symbol> {
     for stmt in stmts {
         match stmt {
             Stmt::Local {
-                name,
-                access,
-                span,
-                ..
+                name, access, span, ..
             } => {
                 symbols.push(Symbol {
                     name: name.clone(),
@@ -104,10 +101,7 @@ pub fn extract_symbols(stmts: &[Stmt], source: &str) -> Vec<Symbol> {
                 });
             }
             Stmt::ClassDef {
-                name,
-                access,
-                span,
-                ..
+                name, access, span, ..
             } => {
                 symbols.push(Symbol {
                     name: name.clone(),

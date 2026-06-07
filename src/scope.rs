@@ -1,4 +1,4 @@
-use crate::ast::{Stmt, Expr};
+use crate::ast::{Expr, Stmt};
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -52,7 +52,8 @@ impl ScopeAnalysis {
 
     fn warn_undeclared(&mut self, name: &str, context: &str) {
         if !self.is_declared(name) && !is_keyword_or_builtin(name) {
-            self.warnings.push(format!("undefined variable '{}' ({})", name, context));
+            self.warnings
+                .push(format!("undefined variable '{}' ({})", name, context));
         }
     }
 
@@ -66,16 +67,26 @@ impl ScopeAnalysis {
         match stmt {
             Stmt::Local { name, value, .. } => {
                 self.declare(name);
-                if let Some(v) = value { self.walk_expr(v); }
+                if let Some(v) = value {
+                    self.walk_expr(v);
+                }
             }
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target);
                 self.walk_expr(value);
             }
             Stmt::Return { value, .. } => {
-                if let Some(v) = value { self.walk_expr(v); }
+                if let Some(v) = value {
+                    self.walk_expr(v);
+                }
             }
-            Stmt::If { cond, then_block, else_if_blocks, else_block, .. } => {
+            Stmt::If {
+                cond,
+                then_block,
+                else_if_blocks,
+                else_block,
+                ..
+            } => {
                 self.walk_expr(cond);
                 self.push_scope();
                 self.walk_stmts(then_block);
@@ -98,19 +109,31 @@ impl ScopeAnalysis {
                 self.walk_stmts(block);
                 self.pop_scope();
             }
-            Stmt::For { var, iter, block, .. } => {
+            Stmt::For {
+                var, iter, block, ..
+            } => {
                 self.push_scope();
                 self.declare(var);
                 self.walk_expr(iter);
                 self.walk_stmts(block);
                 self.pop_scope();
             }
-            Stmt::FuncDef { name, params, param_defaults, block, .. } => {
+            Stmt::FuncDef {
+                name,
+                params,
+                param_defaults,
+                block,
+                ..
+            } => {
                 self.declare(name);
                 self.push_scope();
-                for p in params { self.declare(p); }
+                for p in params {
+                    self.declare(p);
+                }
                 for d in param_defaults {
-                    if let Some(e) = d { self.walk_expr(e); }
+                    if let Some(e) = d {
+                        self.walk_expr(e);
+                    }
                 }
                 self.walk_stmts(block);
                 self.pop_scope();
@@ -120,16 +143,29 @@ impl ScopeAnalysis {
                 self.walk_stmts(body);
             }
             Stmt::ExprStmt { expr, .. } => self.walk_expr(expr),
-            Stmt::EnumDef { name, .. } => { self.declare(name); }
-            Stmt::StructDef { name, .. } => { self.declare(name); }
-            Stmt::Import { alias, .. } => { self.declare(alias); }
-            Stmt::TryCatch { try_block, catch_clauses, finally_block, .. } => {
+            Stmt::EnumDef { name, .. } => {
+                self.declare(name);
+            }
+            Stmt::StructDef { name, .. } => {
+                self.declare(name);
+            }
+            Stmt::Import { alias, .. } => {
+                self.declare(alias);
+            }
+            Stmt::TryCatch {
+                try_block,
+                catch_clauses,
+                finally_block,
+                ..
+            } => {
                 self.push_scope();
                 self.walk_stmts(try_block);
                 self.pop_scope();
                 for (_, var_name, block) in catch_clauses {
                     self.push_scope();
-                    if let Some(v) = var_name { self.declare(v); }
+                    if let Some(v) = var_name {
+                        self.declare(v);
+                    }
                     self.walk_stmts(block);
                     self.pop_scope();
                 }
@@ -152,11 +188,15 @@ impl ScopeAnalysis {
                 }
             }
             Expr::Call { args, .. } => {
-                for a in args { self.walk_expr(a); }
+                for a in args {
+                    self.walk_expr(a);
+                }
             }
             Expr::MethodCall { obj, args, .. } => {
                 self.walk_expr(obj);
-                for a in args { self.walk_expr(a); }
+                for a in args {
+                    self.walk_expr(a);
+                }
             }
             Expr::Member { obj, .. } => self.walk_expr(obj),
             Expr::Index { obj, index } => {
@@ -171,7 +211,11 @@ impl ScopeAnalysis {
                 self.walk_expr(left);
                 self.walk_expr(right);
             }
-            Expr::Ternary { cond, then_expr, else_expr } => {
+            Expr::Ternary {
+                cond,
+                then_expr,
+                else_expr,
+            } => {
                 self.walk_expr(cond);
                 self.walk_expr(then_expr);
                 self.walk_expr(else_expr);
@@ -179,7 +223,11 @@ impl ScopeAnalysis {
             Expr::UnaryMinus(e) => self.walk_expr(e),
             Expr::Not(e) => self.walk_expr(e),
             Expr::Grouping(e) => self.walk_expr(e),
-            Expr::Array(elements) => { for e in elements { self.walk_expr(e); } }
+            Expr::Array(elements) => {
+                for e in elements {
+                    self.walk_expr(e);
+                }
+            }
             Expr::Table(fields) => {
                 for f in fields {
                     match f {
@@ -194,7 +242,9 @@ impl ScopeAnalysis {
             Expr::AwaitExpr(e) => self.walk_expr(e),
             Expr::Function { params, block } => {
                 self.push_scope();
-                for p in params { self.declare(p); }
+                for p in params {
+                    self.declare(p);
+                }
                 self.walk_stmts(block);
                 self.pop_scope();
             }
@@ -204,31 +254,128 @@ impl ScopeAnalysis {
 }
 
 fn is_keyword_or_builtin(name: &str) -> bool {
-    matches!(name,
-        "if" | "else" | "elif" | "while" | "for" | "in" | "function" |
-        "class" | "struct" | "enum" | "import" | "as" | "local" | "return" |
-        "true" | "false" | "nil" | "self" | "break" | "continue" |
-        "and" | "or" | "not" | "public" | "private" | "try" | "catch" |
-        "finally" | "async" | "await" | "global" | "is"
+    matches!(
+        name,
+        "if" | "else"
+            | "elif"
+            | "while"
+            | "for"
+            | "in"
+            | "function"
+            | "class"
+            | "struct"
+            | "enum"
+            | "import"
+            | "as"
+            | "local"
+            | "return"
+            | "true"
+            | "false"
+            | "nil"
+            | "self"
+            | "break"
+            | "continue"
+            | "and"
+            | "or"
+            | "not"
+            | "public"
+            | "private"
+            | "try"
+            | "catch"
+            | "finally"
+            | "async"
+            | "await"
+            | "global"
+            | "is"
     )
 }
 
 const GLOBALS: &[&str] = &[
-    "game", "workspace", "script", "print", "warn", "error",
-    "Players", "ReplicatedStorage", "ServerScriptService", "ServerStorage",
-    "StarterPlayer", "StarterGui", "StarterPack", "Lighting", "SoundService",
-    "RunService", "UserInputService", "ContextActionService", "TweenService",
-    "CollectionService", "HttpService", "TeleportService", "MarketplaceService",
-    "DataStoreService", "MessagingService", "PathfindingService", "PhysicsService",
-    "Teams", "Chat", "LocalizationService", "SocialService", "GroupService",
-    "PolicyService", "AnalyticsService", "AvatarEditorService", "BadgeService",
-    "MemoryStoreService", "TextService", "GuiService", "HapticService",
-    "Enum", "Vector3", "Vector2", "CFrame", "UDim2", "UDim", "Color3",
-    "BrickColor", "TweenInfo", "RaycastParams", "Region3", "Rect",
-    "NumberRange", "NumberSequence", "ColorSequence", "Ray", "DateTime",
-    "Buffer", "Instance", "PhysicalProperties", "Random", "Axes", "Faces",
-    "math", "string", "table", "os", "task", "coroutine", "debug",
-    "utf8", "bit32", "buffer", "typeof", "ipairs", "pairs", "next",
-    "rawget", "rawset", "setmetatable", "getmetatable", "pcall",
-    "xpcall", "tostring", "tonumber", "type", "require",
+    "game",
+    "workspace",
+    "script",
+    "print",
+    "warn",
+    "error",
+    "Players",
+    "ReplicatedStorage",
+    "ServerScriptService",
+    "ServerStorage",
+    "StarterPlayer",
+    "StarterGui",
+    "StarterPack",
+    "Lighting",
+    "SoundService",
+    "RunService",
+    "UserInputService",
+    "ContextActionService",
+    "TweenService",
+    "CollectionService",
+    "HttpService",
+    "TeleportService",
+    "MarketplaceService",
+    "DataStoreService",
+    "MessagingService",
+    "PathfindingService",
+    "PhysicsService",
+    "Teams",
+    "Chat",
+    "LocalizationService",
+    "SocialService",
+    "GroupService",
+    "PolicyService",
+    "AnalyticsService",
+    "AvatarEditorService",
+    "BadgeService",
+    "MemoryStoreService",
+    "TextService",
+    "GuiService",
+    "HapticService",
+    "Enum",
+    "Vector3",
+    "Vector2",
+    "CFrame",
+    "UDim2",
+    "UDim",
+    "Color3",
+    "BrickColor",
+    "TweenInfo",
+    "RaycastParams",
+    "Region3",
+    "Rect",
+    "NumberRange",
+    "NumberSequence",
+    "ColorSequence",
+    "Ray",
+    "DateTime",
+    "Buffer",
+    "Instance",
+    "PhysicalProperties",
+    "Random",
+    "Axes",
+    "Faces",
+    "math",
+    "string",
+    "table",
+    "os",
+    "task",
+    "coroutine",
+    "debug",
+    "utf8",
+    "bit32",
+    "buffer",
+    "typeof",
+    "ipairs",
+    "pairs",
+    "next",
+    "rawget",
+    "rawset",
+    "setmetatable",
+    "getmetatable",
+    "pcall",
+    "xpcall",
+    "tostring",
+    "tonumber",
+    "type",
+    "require",
 ];

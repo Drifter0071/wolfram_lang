@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use lsp_types::Url;
 use crate::ast::Stmt;
-use crate::parser::Parser;
 use crate::lexer::Token;
+use crate::parser::Parser;
 use logos::Logos;
+use lsp_types::Url;
+use std::collections::HashMap;
 
 pub struct DocumentStore {
     documents: HashMap<Url, DocumentState>,
@@ -19,7 +19,12 @@ pub struct LineMapEntry {
 
 impl LineMapEntry {
     pub fn new(wrm_line: usize, wrm_col: usize, luau_line: usize, luau_col: usize) -> Self {
-        Self { wrm_line, wrm_col, luau_line, luau_col }
+        Self {
+            wrm_line,
+            wrm_col,
+            luau_line,
+            luau_col,
+        }
     }
 }
 
@@ -44,7 +49,9 @@ pub struct ScopeMap {
 
 impl DocumentStore {
     pub fn new() -> Self {
-        Self { documents: HashMap::new() }
+        Self {
+            documents: HashMap::new(),
+        }
     }
 
     pub fn open(&mut self, uri: &Url, source: String) {
@@ -62,7 +69,13 @@ impl DocumentStore {
         }
     }
 
-    pub fn update_with_range(&mut self, uri: &Url, text: &str, range_start: usize, range_end: usize) {
+    pub fn update_with_range(
+        &mut self,
+        uri: &Url,
+        text: &str,
+        range_start: usize,
+        range_end: usize,
+    ) {
         if let Some(state) = self.documents.get_mut(uri) {
             state.source = text.to_string();
             state.dirty = true;
@@ -87,7 +100,11 @@ impl DocumentStore {
     pub fn reparse_if_dirty(&mut self, uri: &Url) {
         let state = self.documents.get(uri).map(|s| s.dirty).unwrap_or(false);
         if state {
-            let source = self.documents.get(uri).map(|s| s.source.clone()).unwrap_or_default();
+            let source = self
+                .documents
+                .get(uri)
+                .map(|s| s.source.clone())
+                .unwrap_or_default();
             let new_state = parse_document(uri, source);
             self.documents.insert(uri.clone(), new_state);
         }
@@ -115,8 +132,7 @@ impl DocumentStore {
 
     pub fn find_by_file_name(&self, file_name: &str) -> Option<&DocumentState> {
         self.documents.values().find(|d| {
-            d.uri.path().ends_with(file_name)
-                || d.uri.path().ends_with(&format!("/{}", file_name))
+            d.uri.path().ends_with(file_name) || d.uri.path().ends_with(&format!("/{}", file_name))
         })
     }
 
@@ -161,13 +177,19 @@ fn extract_scope(ast: &[Stmt], source: &str) -> ScopeMap {
 
     for stmt in ast {
         if let Stmt::Local { name, value, .. } = stmt {
-            let var_type = value.as_ref().map(|v| infer_expr_type(v, source)).unwrap_or_else(|| "any".into());
+            let var_type = value
+                .as_ref()
+                .map(|v| infer_expr_type(v, source))
+                .unwrap_or_else(|| "any".into());
             scope.variables.insert(name.clone(), var_type);
         }
 
         if let Stmt::FuncDef { name, params, .. } = stmt {
             let param_types: Vec<String> = params.iter().map(|_| "any".into()).collect();
-            scope.variables.insert(name.clone(), format!("function({})", param_types.join(", ")));
+            scope.variables.insert(
+                name.clone(),
+                format!("function({})", param_types.join(", ")),
+            );
         }
 
         if let Stmt::For { var, .. } = stmt {
@@ -186,19 +208,17 @@ fn infer_expr_type(expr: &crate::ast::Expr, _source: &str) -> String {
         crate::ast::Expr::Bool(_) => "bool".into(),
         crate::ast::Expr::Nil => "nil".into(),
         crate::ast::Expr::Ident(name) => name.clone(),
-        crate::ast::Expr::Call { func, .. } => {
-            match func.as_str() {
-                "Vector3" => "Vector3".into(),
-                "Vector2" => "Vector2".into(),
-                "CFrame" => "CFrame".into(),
-                "Color3" => "Color3".into(),
-                "UDim2" => "UDim2".into(),
-                "Ray" => "Ray".into(),
-                "Region3" => "Region3".into(),
-                "DateTime" => "DateTime".into(),
-                _ => "any".into(),
-            }
-        }
+        crate::ast::Expr::Call { func, .. } => match func.as_str() {
+            "Vector3" => "Vector3".into(),
+            "Vector2" => "Vector2".into(),
+            "CFrame" => "CFrame".into(),
+            "Color3" => "Color3".into(),
+            "UDim2" => "UDim2".into(),
+            "Ray" => "Ray".into(),
+            "Region3" => "Region3".into(),
+            "DateTime" => "DateTime".into(),
+            _ => "any".into(),
+        },
         _ => "any".into(),
     }
 }

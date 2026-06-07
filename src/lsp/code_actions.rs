@@ -1,5 +1,5 @@
-use lsp_types::*;
 use crate::lsp::store::DocumentStore;
+use lsp_types::*;
 
 pub fn handle_code_action(
     store: &mut DocumentStore,
@@ -96,8 +96,14 @@ fn fix_undeclared(source: &str, diag: &Diagnostic) -> Option<QuickFix> {
     let insert_text = format!("{}local {} = nil\n{}", indent, var_name, indent);
     let edit = TextEdit {
         range: Range {
-            start: Position { line: insert_line as u32, character: 0 },
-            end: Position { line: insert_line as u32, character: 0 },
+            start: Position {
+                line: insert_line as u32,
+                character: 0,
+            },
+            end: Position {
+                line: insert_line as u32,
+                character: 0,
+            },
         },
         new_text: insert_text,
     };
@@ -127,16 +133,27 @@ fn fix_deprecated(source: &str, diag: &Diagnostic) -> Option<QuickFix> {
     let target_line = lines.get(line).copied().unwrap_or("");
 
     // Find the deprecated word and its range
-    let old_func = if msg.contains("wait(") { "wait" }
-        else if msg.contains("spawn(") { "spawn" }
-        else if msg.contains("delay(") { "delay" }
-        else { return None };
+    let old_func = if msg.contains("wait(") {
+        "wait"
+    } else if msg.contains("spawn(") {
+        "spawn"
+    } else if msg.contains("delay(") {
+        "delay"
+    } else {
+        return None;
+    };
 
     let pos = target_line.find(old_func)?;
     let edit = TextEdit {
         range: Range {
-            start: Position { line: line as u32, character: pos as u32 },
-            end: Position { line: line as u32, character: (pos + old_func.len()) as u32 },
+            start: Position {
+                line: line as u32,
+                character: pos as u32,
+            },
+            end: Position {
+                line: line as u32,
+                character: (pos + old_func.len()) as u32,
+            },
         },
         new_text: replacement.to_string(),
     };
@@ -150,7 +167,11 @@ fn fix_deprecated(source: &str, diag: &Diagnostic) -> Option<QuickFix> {
 
 fn fix_remote_wrapper(source: &str, diag: &Diagnostic) -> Option<QuickFix> {
     let line = diag.range.start.line as usize;
-    let indent = source.lines().nth(line).map(|l| l.chars().take_while(|c| c.is_whitespace()).count()).unwrap_or(0);
+    let indent = source
+        .lines()
+        .nth(line)
+        .map(|l| l.chars().take_while(|c| c.is_whitespace()).count())
+        .unwrap_or(0);
     let _pad = " ".repeat(indent.max(4));
 
     let insert_text = format!(
@@ -160,8 +181,14 @@ fn fix_remote_wrapper(source: &str, diag: &Diagnostic) -> Option<QuickFix> {
 
     let edit = TextEdit {
         range: Range {
-            start: Position { line: line as u32, character: 0 },
-            end: Position { line: line as u32, character: 0 },
+            start: Position {
+                line: line as u32,
+                character: 0,
+            },
+            end: Position {
+                line: line as u32,
+                character: 0,
+            },
         },
         new_text: insert_text,
     };
@@ -186,8 +213,14 @@ fn fix_missing_return(source: &str, _diag: &Diagnostic) -> Option<QuickFix> {
 
     let edit = TextEdit {
         range: Range {
-            start: Position { line: lines.len() as u32, character: 0 },
-            end: Position { line: lines.len() as u32, character: 0 },
+            start: Position {
+                line: lines.len() as u32,
+                character: 0,
+            },
+            end: Position {
+                line: lines.len() as u32,
+                character: 0,
+            },
         },
         new_text: insert_text,
     };
@@ -205,14 +238,19 @@ fn fix_missing_init(source: &str, diag: &Diagnostic) -> Option<QuickFix> {
     // Find the class body and insert init() before the closing brace
     let class_name = extract_class_name(source, line).unwrap_or("MyClass".to_string());
 
-    let insert_text = format!(
-        "    public function init(self)\n        -- Initialize instance here\n    end\n\n"
-    );
+    let insert_text =
+        format!("    public function init(self)\n        -- Initialize instance here\n    end\n\n");
 
     let edit = TextEdit {
         range: Range {
-            start: Position { line: line as u32 + 1, character: 0 },
-            end: Position { line: line as u32 + 1, character: 0 },
+            start: Position {
+                line: line as u32 + 1,
+                character: 0,
+            },
+            end: Position {
+                line: line as u32 + 1,
+                character: 0,
+            },
         },
         new_text: insert_text,
     };
@@ -250,7 +288,8 @@ fn is_word_boundary(c: Option<char>) -> bool {
 }
 
 fn get_line_indent(lines: &[&str], line_idx: usize) -> String {
-    let prefix: String = lines.get(line_idx)
+    let prefix: String = lines
+        .get(line_idx)
         .map(|l| l.chars().take_while(|c| c.is_whitespace()).collect())
         .unwrap_or_default();
     prefix
