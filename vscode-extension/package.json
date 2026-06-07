@@ -1,0 +1,107 @@
+{
+  "name": "wolfram-lang",
+  "displayName": "Wolfram Language",
+  "description": "Wolfram language support for VS Code — syntax highlighting, intellisense, watch server, and Roblox project templates",
+  "version": "0.1.0",
+  "publisher": "wolfram",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Programming Languages"],
+  "activationEvents": [
+    "onLanguage:wolfram",
+    "workspaceContains:**/*.wol"
+  ],
+  "main": "./out/extension.js",
+  "files": [
+    "out/**/*",
+    "src/syntaxes/**/*",
+    "templates/**/*",
+    "generated/**/*",
+    "language-configuration.json"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "wolfram",
+        "aliases": ["Wolfram", "wolfram"],
+        "extensions": [".wol"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "wolfram",
+        "scopeName": "source.wol",
+        "path": "./src/syntaxes/wolfram.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "wolfram.newProject",
+        "title": "Wolfram: New Project"
+      },
+      {
+        "command": "wolfram.startWatch",
+        "title": "Wolfram: Start Watch Server"
+      },
+      {
+        "command": "wolfram.stopWatch",
+        "title": "Wolfram: Stop Watch Server"
+      },
+      {
+        "command": "wolfram.compileFile",
+        "title": "Wolfram: Compile Current File"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "wolfram.compileFile",
+        "key": "f5",
+        "when": "editorLangId == wolfram"
+      }
+    ],
+    "configuration": {
+      "title": "Wolfram",
+      "properties": {
+        "wolfram.compilerPath": {
+          "type": "string",
+          "default": "wolfram",
+          "description": "Path to the wolfram compiler binary"
+        },
+        "wolfram.watchOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start the watch server when opening a .wol file"
+        },
+        "wolfram.outputDir": {
+          "type": "string",
+          "default": "out",
+          "description": "Output directory for compiled .luau files"
+        },
+        "wolfram.robloxPort": {
+          "type": "number",
+          "default": 8081,
+          "description": "Default port for Roblox Studio bridge"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "tsc -p ./",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0",
+    "vscode-languageserver": "^9.0.0",
+    "vscode-languageserver-textdocument": "^1.0.0"
+  }
+}

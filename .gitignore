@@ -1,0 +1,22 @@
+# Rust build output
+target/
+
+# VS Code extension build output
+vscode-extension/out/
+vscode-extension/node_modules/
+vscode-extension/package-lock.json
+
+# Generated files (rebuild from generator)
+vscode-extension/generated/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+*.luau
+out/

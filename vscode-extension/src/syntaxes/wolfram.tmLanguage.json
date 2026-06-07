@@ -1,0 +1,203 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Wolfram",
+  "scopeName": "source.wol",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#fstrings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#definition-keywords"
+    },
+    {
+      "include": "#access-modifiers"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#identifiers"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "name": "comment.line.double-dash.wol",
+      "begin": "--",
+      "end": "$"
+    },
+    "strings": {
+      "name": "string.quoted.double.wol",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.wol",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "fstrings": {
+      "name": "string.quoted.double.interpolated.wol",
+      "begin": "f\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.wol",
+          "match": "\\\\."
+        },
+        {
+          "include": "#interpolation"
+        }
+      ]
+    },
+    "interpolation": {
+      "name": "meta.embedded.expression.wol",
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [
+        {
+          "include": "$self"
+        }
+      ]
+    },
+    "numbers": {
+      "name": "constant.numeric.wol",
+      "match": "\\b[0-9]+(\\.[0-9]+)?\\b"
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.conditional.wol",
+          "match": "\\b(if|else)\\b"
+        },
+        {
+          "name": "keyword.control.loop.wol",
+          "match": "\\b(while|for|in|break|continue)\\b"
+        },
+        {
+          "name": "keyword.control.return.wol",
+          "match": "\\b(return)\\b"
+        },
+        {
+          "name": "keyword.operator.word.wol",
+          "match": "\\b(and|or|not)\\b"
+        },
+        {
+          "name": "keyword.other.import.wol",
+          "match": "\\b(import|as)\\b"
+        },
+        {
+          "name": "keyword.other.local.wol",
+          "match": "\\b(local)\\b"
+        }
+      ]
+    },
+    "definition-keywords": {
+      "patterns": [
+        {
+          "name": "keyword.other.function.wol",
+          "match": "\\b(function)\\b"
+        },
+        {
+          "name": "keyword.other.class.wol",
+          "match": "\\b(class)\\b"
+        },
+        {
+          "name": "keyword.other.struct.wol",
+          "match": "\\b(struct|enum)\\b"
+        }
+      ]
+    },
+    "access-modifiers": {
+      "name": "storage.modifier.access.wol",
+      "match": "\\b(public|private)\\b"
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.wol",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.null.wol",
+          "match": "\\b(nil)\\b"
+        },
+        {
+          "name": "variable.language.self.wol",
+          "match": "\\b(self)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.compound.wol",
+          "match": "\\+=|-=|\\*=|/=|%="
+        },
+        {
+          "name": "keyword.operator.comparison.wol",
+          "match": "==|~=|!=|<=|>="
+        },
+        {
+          "name": "keyword.operator.assignment.wol",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.concatenation.wol",
+          "match": "\\.\\."
+        },
+        {
+          "name": "keyword.operator.arithmetic.wol",
+          "match": "\\*\\*|//|\\+|\\-|\\*|/|%"
+        },
+        {
+          "name": "keyword.operator.comparison.wol",
+          "match": "<|>"
+        },
+        {
+          "name": "keyword.operator.ternary.wol",
+          "match": "\\?"
+        },
+        {
+          "name": "keyword.operator.separator.wol",
+          "match": ";|,"
+        },
+        {
+          "name": "keyword.operator.access.wol",
+          "match": "\\.|:"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "entity.name.function.wol",
+          "match": "(?<=function\\s+)[a-zA-Z_][a-zA-Z0-9_]*"
+        },
+        {
+          "name": "entity.name.type.class.wol",
+          "match": "(?<=class\\s+)[a-zA-Z_][a-zA-Z0-9_]*"
+        },
+        {
+          "name": "variable.other.wol",
+          "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}

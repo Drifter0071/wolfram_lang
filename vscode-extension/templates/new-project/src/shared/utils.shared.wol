@@ -1,0 +1,17 @@
+-- $project_name — Shared Utilities
+-- Available to both client and server
+-- Output: out/shared/utils.shared.luau
+
+public function add(a, b) {
+    return a + b
+}
+
+public function greet(name) {
+    return "Hello, " .. name .. "!"
+}
+
+public enum GameState {
+    Lobby,
+    Playing,
+    Ended
+}

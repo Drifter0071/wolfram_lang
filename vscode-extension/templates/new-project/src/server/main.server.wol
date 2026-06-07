@@ -1,0 +1,20 @@
+-- $project_name — Server Script
+-- Runs on the server
+-- Output: out/server/main.server.luau
+
+local Players = game:GetService("Players")
+
+function on_player_added(player) {
+    print(player.Name .. " joined the game!")
+
+    local function on_character_added(character) {
+        local humanoid = character:FindFirstChild("Humanoid")
+        if (humanoid) {
+            print(player.Name .. " spawned as " .. humanoid.DisplayName)
+        }
+    }
+
+    player.CharacterAdded:Connect(on_character_added)
+}
+
+Players.PlayerAdded:Connect(on_player_added)

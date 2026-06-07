@@ -1,0 +1,12 @@
+-- $project_name — Client Script
+-- Runs on each player's client
+-- Output: out/client/main.client.luau
+
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+function on_player_ready() {
+    print("Client ready for " .. player.Name)
+}
+
+on_player_ready()

@@ -1,0 +1,8 @@
+[roblox]
+enabled = true
+port = 8081
+auto_push = false
+
+[[roblox.mappings]]
+source = "src/**/*.wol"
+target = "out"
