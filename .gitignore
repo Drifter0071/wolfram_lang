@@ -17,6 +17,5 @@ vscode-extension/generated/
 .DS_Store
 Thumbs.db
 
-# Misc
-*.luau
-out/
+# VSIX artifacts
+*.vsix

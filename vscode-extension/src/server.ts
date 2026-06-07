@@ -94,6 +94,52 @@ interface AnalyzeResult {
 let symbolCache: Map<string, AnalyzeResult> = new Map();
 let diagnosticTimers: Map<string, NodeJS.Timeout> = new Map();
 
+let wolPathCache: string[] = [];
+let wolPathCacheTime = 0;
+
+function collectWolPaths(root: string): string[] {
+  const results: string[] = [];
+  try {
+    const stack = [root];
+    while (stack.length > 0) {
+      const dir = stack.pop()!;
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== "node_modules" && entry.name !== ".git" && entry.name !== "target" && entry.name !== "out") {
+            stack.push(full);
+          }
+        } else if (entry.name.endsWith(".wol")) {
+          results.push(full);
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return results;
+}
+
+function getCachedWolPaths(sourceDir: string): string[] {
+  const now = Date.now();
+  if (now - wolPathCacheTime > 5000) {
+    wolPathCache = collectWolPaths(sourceDir);
+    wolPathCacheTime = now;
+  }
+  return wolPathCache;
+}
+
+function isInsideImportString(linePrefix: string): { isImport: boolean; partialPath: string } {
+  const trimmed = linePrefix.trimStart();
+  // Match: import "partial/path
+  const match = trimmed.match(/^import\s+["'](.*)$/);
+  if (match) {
+    return { isImport: true, partialPath: match[1] };
+  }
+  return { isImport: false, partialPath: "" };
+}
+
 connection.onInitialize((params: InitializeParams) => {
   if (params.workspaceFolders && params.workspaceFolders.length > 0) {
     workspaceRoot = params.workspaceFolders[0].uri;
@@ -333,6 +379,58 @@ connection.onCompletion(
           kind: CompletionItemKind.Text,
         });
       }
+    }
+
+    // Import path completion
+    const { isImport, partialPath } = isInsideImportString(linePrefix);
+    if (isImport) {
+      const docUri = document.uri;
+      const docDir = path.dirname(fs.existsSync(docUri) ? docUri : docUri.replace(/^file:\/\//, ""));
+      const srcDir = workspaceRoot && fs.existsSync(workspaceRoot)
+        ? workspaceRoot
+        : docDir;
+
+      const allPaths = getCachedWolPaths(srcDir);
+      const partialLower = partialPath.toLowerCase();
+
+      for (const fullPath of allPaths) {
+        let relPath = path.relative(docDir, fullPath).replace(/\\/g, "/");
+        // Strip .wol extension for completions
+        const relNoExt = relPath.replace(/\.wol$/, "");
+
+        if (relNoExt.toLowerCase().startsWith(partialLower) || partialPath === "") {
+          items.push({
+            label: relNoExt,
+            kind: CompletionItemKind.File,
+            detail: relPath,
+            filterText: relNoExt,
+          });
+        }
+      }
+
+      // Show "." and ".." directory completions
+      if (partialPath === "" || partialPath.endsWith("/")) {
+        const scanDir = partialPath
+          ? path.join(docDir, partialPath.replace(/\/$/, ""))
+          : docDir;
+        try {
+          const entries = fs.readdirSync(scanDir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isDirectory() && !entry.name.startsWith(".")) {
+              items.push({
+                label: `${partialPath}${entry.name}/`,
+                kind: CompletionItemKind.Folder,
+                detail: "Directory",
+                filterText: `${partialPath}${entry.name}`,
+              });
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      return items;
     }
 
     // Keyword completions

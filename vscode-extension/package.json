@@ -5,6 +5,10 @@
   "version": "0.1.0",
   "publisher": "wolfram",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/user/wolfram-lang"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -19,7 +23,8 @@
     "src/syntaxes/**/*",
     "templates/**/*",
     "generated/**/*",
-    "language-configuration.json"
+    "language-configuration.json",
+    "LICENSE"
   ],
   "contributes": {
     "languages": [
