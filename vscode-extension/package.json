@@ -15,7 +15,8 @@
   "categories": ["Programming Languages"],
   "activationEvents": [
     "onLanguage:wolfram",
-    "workspaceContains:**/*.wrm"
+    "workspaceContains:**/*.wrm",
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "files": [
@@ -30,8 +31,9 @@
     "languages": [
       {
         "id": "wolfram",
-        "aliases": ["Wolfram", "wolfram"],
+        "aliases": ["Wolfram"],
         "extensions": [".wrm"],
+        "firstLine": "^-- .*Wolfram",
         "configuration": "./language-configuration.json"
       }
     ],

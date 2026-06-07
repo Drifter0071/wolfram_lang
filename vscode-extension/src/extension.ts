@@ -25,6 +25,16 @@ function getOutputDir(): string {
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  try {
+    activateInternal(context);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    vscode.window.showErrorMessage(`Wolfram extension failed: ${msg}`);
+    console.error("Wolfram activation error:", err);
+  }
+}
+
+function activateInternal(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel("Wolfram");
   outputChannel.appendLine("Wolfram extension activated");
 
