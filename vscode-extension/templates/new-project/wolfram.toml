@@ -1,3 +1,3 @@
 [[roblox.mappings]]
-source = "src/**/*.wol"
+source = "src/**/*.wrm"
 target = "out"

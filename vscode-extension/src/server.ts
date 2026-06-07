@@ -110,7 +110,7 @@ function collectWolPaths(root: string): string[] {
           if (entry.name !== "node_modules" && entry.name !== ".git" && entry.name !== "target" && entry.name !== "out") {
             stack.push(full);
           }
-        } else if (entry.name.endsWith(".wol")) {
+        } else if (entry.name.endsWith(".wrm")) {
           results.push(full);
         }
       }
@@ -395,8 +395,8 @@ connection.onCompletion(
 
       for (const fullPath of allPaths) {
         let relPath = path.relative(docDir, fullPath).replace(/\\/g, "/");
-        // Strip .wol extension for completions
-        const relNoExt = relPath.replace(/\.wol$/, "");
+        // Strip .wrm extension for completions
+        const relNoExt = relPath.replace(/\.wrm$/, "");
 
         if (relNoExt.toLowerCase().startsWith(partialLower) || partialPath === "") {
           items.push({

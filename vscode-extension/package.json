@@ -15,7 +15,7 @@
   "categories": ["Programming Languages"],
   "activationEvents": [
     "onLanguage:wolfram",
-    "workspaceContains:**/*.wol"
+    "workspaceContains:**/*.wrm"
   ],
   "main": "./out/extension.js",
   "files": [
@@ -31,14 +31,14 @@
       {
         "id": "wolfram",
         "aliases": ["Wolfram", "wolfram"],
-        "extensions": [".wol"],
+        "extensions": [".wrm"],
         "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
       {
         "language": "wolfram",
-        "scopeName": "source.wol",
+        "scopeName": "source.wrm",
         "path": "./src/syntaxes/wolfram.tmLanguage.json"
       }
     ],
@@ -78,7 +78,7 @@
         "wolfram.watchOnOpen": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically start the watch server when opening a .wol file"
+          "description": "Automatically start the watch server when opening a .wrm file"
         },
         "wolfram.outputDir": {
           "type": "string",

@@ -33,7 +33,7 @@ Luau is powerful but verbose. Wolfram adds familiar syntax from Python and C# �
 cargo build --release
 
 # Transpile a single file
-wolfram src/main.wol              # → out/main.luau
+wolfram src/main.wrm              # → out/main.luau
 
 # Transpile a project directory
 wolfram src/                      # → out/**/*.luau
@@ -42,7 +42,7 @@ wolfram src/                      # → out/**/*.luau
 wolfram --watch src/
 
 # Analyze mode — JSON diagnostics + symbols for tooling
-wolfram --analyze src/main.wol
+wolfram --analyze src/main.wrm
 ```
 
 ## VS Code Extension
@@ -59,7 +59,7 @@ Then press `F5` in VS Code to launch an Extension Development Host, or run `npx 
 
 ### Features
 
-- **Syntax highlighting** — TextMate grammar for `.wol` files
+- **Syntax highlighting** — TextMate grammar for `.wrm` files
 - **Intellisense** — Keyword snippets, local symbols, function signatures
 
 - **Roblox API autocomplete** — Full Roblox class/type/enum bindings (849 types, 585 enums)
@@ -86,7 +86,7 @@ Then press `F5` in VS Code to launch an Extension Development Host, or run `npx 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `wolfram.compilerPath` | `wolfram` | Path to the compiler binary |
-| `wolfram.watchOnOpen` | `true` | Auto-start watch server on `.wol` workspace |
+| `wolfram.watchOnOpen` | `true` | Auto-start watch server on `.wrm` workspace |
 | `wolfram.outputDir` | `out` | Output directory for compiled `.luau` files |
 
 ## Roblox + Rojo Integration
@@ -99,11 +99,11 @@ my-game/
 ├── default.project.json      Rojo project manifest
 ├── src/
 │   ├── client/
-│   │   └── main.client.wol   →  out/client/main.client.luau
+│   │   └── main.client.wrm   →  out/client/main.client.luau
 │   ├── shared/
-│   │   └── utils.shared.wol  →  out/shared/utils.shared.luau
+│   │   └── utils.shared.wrm  →  out/shared/utils.shared.luau
 │   └── server/
-│       └── main.server.wol   →  out/server/main.server.luau
+│       └── main.server.wrm   →  out/server/main.server.luau
 └── out/                      Auto-generated, gitignored
     ├── client/
     ├── shared/
@@ -112,7 +112,7 @@ my-game/
 
 ### How it works
 
-1. Write `.wol` files in `src/` under `client/`, `shared/`, or `server/`
+1. Write `.wrm` files in `src/` under `client/`, `shared/`, or `server/`
 2. The watcher transpiles to identically-structured `out/`
 3. Rojo reads `default.project.json` and syncs `out/` into Roblox Studio
 4. `.client.luau` / `.server.luau` file naming tells Roblox which runtime to use
@@ -123,7 +123,7 @@ my-game/
 
 ```toml
 [[roblox.mappings]]
-source = "src/**/*.wol"
+source = "src/**/*.wrm"
 target = "out"
 ```
 

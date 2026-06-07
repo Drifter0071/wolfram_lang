@@ -13,7 +13,7 @@ use roblox_config::RobloxProjectConfig;
 
 /// Transpile Wolfram source code → Luau source code.
 /// `source_code` — full Wolfram source string.
-/// `file_path`   — display name used in error messages (e.g. "main.wol").
+/// `file_path`   — display name used in error messages (e.g. "main.wrm").
 pub fn transpile(source_code: &str, file_path: &str) -> Result<String, String> {
     transpile_inner(source_code, file_path, false, None, None)
 }

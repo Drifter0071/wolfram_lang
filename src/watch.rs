@@ -46,7 +46,7 @@ pub fn run_watch(input_dir: &Path, verbose: bool) {
                     EventKind::Create(_) | EventKind::Modify(_) => {
                         for path in &event.paths {
                             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                                if ext == "wol" || path.file_name().and_then(|n| n.to_str()) == Some("wolfram.toml") {
+                                if ext == "wrm" || path.file_name().and_then(|n| n.to_str()) == Some("wolfram.toml") {
                                     let now = Instant::now();
                                     let should_process = match &last_event {
                                         Some((t, p)) if p == path => {

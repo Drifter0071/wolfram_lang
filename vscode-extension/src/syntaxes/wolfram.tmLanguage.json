@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "Wolfram",
-  "scopeName": "source.wol",
+  "scopeName": "source.wrm",
   "patterns": [
     {
       "include": "#comments"
@@ -36,28 +36,28 @@
   ],
   "repository": {
     "comments": {
-      "name": "comment.line.double-dash.wol",
+      "name": "comment.line.double-dash.wrm",
       "begin": "--",
       "end": "$"
     },
     "strings": {
-      "name": "string.quoted.double.wol",
+      "name": "string.quoted.double.wrm",
       "begin": "\"",
       "end": "\"",
       "patterns": [
         {
-          "name": "constant.character.escape.wol",
+          "name": "constant.character.escape.wrm",
           "match": "\\\\."
         }
       ]
     },
     "fstrings": {
-      "name": "string.quoted.double.interpolated.wol",
+      "name": "string.quoted.double.interpolated.wrm",
       "begin": "f\"",
       "end": "\"",
       "patterns": [
         {
-          "name": "constant.character.escape.wol",
+          "name": "constant.character.escape.wrm",
           "match": "\\\\."
         },
         {
@@ -66,7 +66,7 @@
       ]
     },
     "interpolation": {
-      "name": "meta.embedded.expression.wol",
+      "name": "meta.embedded.expression.wrm",
       "begin": "\\{",
       "end": "\\}",
       "patterns": [
@@ -76,33 +76,33 @@
       ]
     },
     "numbers": {
-      "name": "constant.numeric.wol",
+      "name": "constant.numeric.wrm",
       "match": "\\b[0-9]+(\\.[0-9]+)?\\b"
     },
     "keywords": {
       "patterns": [
         {
-          "name": "keyword.control.conditional.wol",
+          "name": "keyword.control.conditional.wrm",
           "match": "\\b(if|else)\\b"
         },
         {
-          "name": "keyword.control.loop.wol",
+          "name": "keyword.control.loop.wrm",
           "match": "\\b(while|for|in|break|continue)\\b"
         },
         {
-          "name": "keyword.control.return.wol",
+          "name": "keyword.control.return.wrm",
           "match": "\\b(return)\\b"
         },
         {
-          "name": "keyword.operator.word.wol",
+          "name": "keyword.operator.word.wrm",
           "match": "\\b(and|or|not)\\b"
         },
         {
-          "name": "keyword.other.import.wol",
+          "name": "keyword.other.import.wrm",
           "match": "\\b(import|as)\\b"
         },
         {
-          "name": "keyword.other.local.wol",
+          "name": "keyword.other.local.wrm",
           "match": "\\b(local)\\b"
         }
       ]
@@ -110,35 +110,35 @@
     "definition-keywords": {
       "patterns": [
         {
-          "name": "keyword.other.function.wol",
+          "name": "keyword.other.function.wrm",
           "match": "\\b(function)\\b"
         },
         {
-          "name": "keyword.other.class.wol",
+          "name": "keyword.other.class.wrm",
           "match": "\\b(class)\\b"
         },
         {
-          "name": "keyword.other.struct.wol",
+          "name": "keyword.other.struct.wrm",
           "match": "\\b(struct|enum)\\b"
         }
       ]
     },
     "access-modifiers": {
-      "name": "storage.modifier.access.wol",
+      "name": "storage.modifier.access.wrm",
       "match": "\\b(public|private)\\b"
     },
     "constants": {
       "patterns": [
         {
-          "name": "constant.language.boolean.wol",
+          "name": "constant.language.boolean.wrm",
           "match": "\\b(true|false)\\b"
         },
         {
-          "name": "constant.language.null.wol",
+          "name": "constant.language.null.wrm",
           "match": "\\b(nil)\\b"
         },
         {
-          "name": "variable.language.self.wol",
+          "name": "variable.language.self.wrm",
           "match": "\\b(self)\\b"
         }
       ]
@@ -146,39 +146,39 @@
     "operators": {
       "patterns": [
         {
-          "name": "keyword.operator.assignment.compound.wol",
+          "name": "keyword.operator.assignment.compound.wrm",
           "match": "\\+=|-=|\\*=|/=|%="
         },
         {
-          "name": "keyword.operator.comparison.wol",
+          "name": "keyword.operator.comparison.wrm",
           "match": "==|~=|!=|<=|>="
         },
         {
-          "name": "keyword.operator.assignment.wol",
+          "name": "keyword.operator.assignment.wrm",
           "match": "="
         },
         {
-          "name": "keyword.operator.concatenation.wol",
+          "name": "keyword.operator.concatenation.wrm",
           "match": "\\.\\."
         },
         {
-          "name": "keyword.operator.arithmetic.wol",
+          "name": "keyword.operator.arithmetic.wrm",
           "match": "\\*\\*|//|\\+|\\-|\\*|/|%"
         },
         {
-          "name": "keyword.operator.comparison.wol",
+          "name": "keyword.operator.comparison.wrm",
           "match": "<|>"
         },
         {
-          "name": "keyword.operator.ternary.wol",
+          "name": "keyword.operator.ternary.wrm",
           "match": "\\?"
         },
         {
-          "name": "keyword.operator.separator.wol",
+          "name": "keyword.operator.separator.wrm",
           "match": ";|,"
         },
         {
-          "name": "keyword.operator.access.wol",
+          "name": "keyword.operator.access.wrm",
           "match": "\\.|:"
         }
       ]
@@ -186,15 +186,15 @@
     "identifiers": {
       "patterns": [
         {
-          "name": "entity.name.function.wol",
+          "name": "entity.name.function.wrm",
           "match": "(?<=function\\s+)[a-zA-Z_][a-zA-Z0-9_]*"
         },
         {
-          "name": "entity.name.type.class.wol",
+          "name": "entity.name.type.class.wrm",
           "match": "(?<=class\\s+)[a-zA-Z_][a-zA-Z0-9_]*"
         },
         {
-          "name": "variable.other.wol",
+          "name": "variable.other.wrm",
           "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
         }
       ]

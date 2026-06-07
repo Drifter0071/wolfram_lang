@@ -50,7 +50,7 @@ export function activate(context: vscode.ExtensionContext) {
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "wolfram" }],
     synchronize: {
-      fileEvents: vscode.workspace.createFileSystemWatcher("**/*.wol"),
+      fileEvents: vscode.workspace.createFileSystemWatcher("**/*.wrm"),
     },
     outputChannel: outputChannel,
   };
@@ -108,7 +108,7 @@ function checkForWolframFiles(dir: string): boolean {
         if (entry.name !== "node_modules" && entry.name !== ".git" && entry.name !== "target") {
           if (checkForWolframFiles(fullPath)) return true;
         }
-      } else if (entry.name.endsWith(".wol")) {
+      } else if (entry.name.endsWith(".wrm")) {
         return true;
       }
     }
@@ -208,7 +208,7 @@ async function compileFile(): Promise<void> {
 
   const outputDir = getOutputDir();
   const relativePath = path.relative(workspaceRoot, filePath);
-  const outPath = path.join(outputDir, relativePath.replace(/\.wol$/, ".luau"));
+  const outPath = path.join(outputDir, relativePath.replace(/\.wrm$/, ".luau"));
   const fullOutPath = path.isAbsolute(outPath)
     ? outPath
     : path.join(workspaceRoot, outPath);
@@ -266,7 +266,7 @@ async function newProject(context: vscode.ExtensionContext): Promise<void> {
       `Wolfram project "${projectName}" created at ${targetDir}`
     );
 
-    const mainFile = path.join(targetDir, "src", "client", "main.client.wol");
+    const mainFile = path.join(targetDir, "src", "client", "main.client.wrm");
     if (fs.existsSync(mainFile)) {
       const doc = await vscode.workspace.openTextDocument(mainFile);
       await vscode.window.showTextDocument(doc);

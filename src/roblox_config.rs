@@ -49,7 +49,7 @@ pub fn resolve_target_path(
                 } else {
                     rest.to_string()
                 };
-                let name = name.strip_suffix(".wol").unwrap_or(&name).to_string();
+                let name = name.strip_suffix(".wrm").unwrap_or(&name).to_string();
 
                 let mut target_parts: Vec<String> = mapping.target.split('.').map(|s| s.to_string()).collect();
                 let subdir = if let Some(slash) = rest.rfind('/') {
@@ -75,10 +75,10 @@ pub fn resolve_target_path(
                 });
             }
         } else {
-            if normalized == source || normalized == format!("{}.wol", source) {
+            if normalized == source || normalized == format!("{}.wrm", source) {
                 let target_parts: Vec<String> = mapping.target.split('.').map(|s| s.to_string()).collect();
                 let name = normalized.rsplit('/').next().unwrap_or(&normalized)
-                    .strip_suffix(".wol").unwrap_or(&normalized).to_string();
+                    .strip_suffix(".wrm").unwrap_or(&normalized).to_string();
                 return Some(ResolvedMapping {
                     target_instance: target_parts,
                     target_name: name,
@@ -126,8 +126,8 @@ pub fn resolve_import(
 
     let resolved = normalize_path(&resolved);
 
-    if !resolved.ends_with(".wol") {
-        let with_ext = format!("{}.wol", resolved);
+    if !resolved.ends_with(".wrm") {
+        let with_ext = format!("{}.wrm", resolved);
         if let (Some(current_target), Some(import_target)) = (
             resolve_target_path(&normalized_current, mappings),
             resolve_target_path(&with_ext, mappings),
