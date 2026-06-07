@@ -1,11 +1,4 @@
-[[roblox.mappings]]
-source = "src/client/**/*.wrm"
-target = "StarterPlayer.StarterPlayerScripts.Client"
-
-[[roblox.mappings]]
-source = "src/server/**/*.wrm"
-target = "ServerScriptService.Server"
-
-[[roblox.mappings]]
-source = "src/shared/**/*.wrm"
-target = "ReplicatedStorage.Shared"
+[deployment]
+"src/client" = "StarterPlayer.StarterPlayerScripts.Client"
+"src/server" = "ServerScriptService.Server"
+"src/shared" = "ReplicatedStorage.Shared"

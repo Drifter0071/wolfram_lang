@@ -1,5 +1,6 @@
 # Rust build output
 target/
+/out/
 
 # VS Code extension build output
 vscode-extension/out/

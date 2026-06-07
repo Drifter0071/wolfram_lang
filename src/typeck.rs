@@ -1,48 +1,7 @@
 use crate::ast::{Expr, Stmt, TableField};
+use crate::constants::ROBLOX_GLOBALS;
+use crate::types::InferredType;
 use std::collections::HashMap;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum InferredType {
-    Number,
-    String,
-    Bool,
-    Nil,
-    Unknown,
-    Array(Box<InferredType>),
-    Table,
-    Function,
-    Instance,
-    Vector3,
-    Vector2,
-    CFrame,
-    UDim2,
-    UDim,
-    Color3,
-    BrickColor,
-}
-
-impl InferredType {
-    pub fn name(&self) -> &'static str {
-        match self {
-            InferredType::Number => "number",
-            InferredType::String => "string",
-            InferredType::Bool => "boolean",
-            InferredType::Nil => "nil",
-            InferredType::Unknown => "unknown",
-            InferredType::Array(_) => "array",
-            InferredType::Table => "table",
-            InferredType::Function => "function",
-            InferredType::Instance => "Instance",
-            InferredType::Vector3 => "Vector3",
-            InferredType::Vector2 => "Vector2",
-            InferredType::CFrame => "CFrame",
-            InferredType::UDim2 => "UDim2",
-            InferredType::UDim => "UDim",
-            InferredType::Color3 => "Color3",
-            InferredType::BrickColor => "BrickColor",
-        }
-    }
-}
 
 #[derive(Default)]
 struct TypeScope {
@@ -82,57 +41,6 @@ fn roblox_type_for(name: &str) -> Option<InferredType> {
         .find(|(n, _)| *n == name)
         .map(|(_, t)| t.clone())
 }
-
-const ROBLOX_GLOBALS: &[&str] = &[
-    "game",
-    "workspace",
-    "script",
-    "Players",
-    "ReplicatedStorage",
-    "ServerScriptService",
-    "ServerStorage",
-    "StarterPlayer",
-    "StarterGui",
-    "Lighting",
-    "SoundService",
-    "RunService",
-    "UserInputService",
-    "ContextActionService",
-    "TweenService",
-    "CollectionService",
-    "HttpService",
-    "TeleportService",
-    "MarketplaceService",
-    "DataStoreService",
-    "MessagingService",
-    "PathfindingService",
-    "PhysicsService",
-    "Teams",
-    "Chat",
-    "LocalizationService",
-    "SocialService",
-    "VRService",
-    "GroupService",
-    "PolicyService",
-    "AnalyticsService",
-    "AvatarEditorService",
-    "BadgeService",
-    "MemoryStoreService",
-    "TextService",
-    "GuiService",
-    "HapticService",
-    "Enum",
-    "math",
-    "string",
-    "table",
-    "os",
-    "task",
-    "coroutine",
-    "debug",
-    "utf8",
-    "bit32",
-    "buffer",
-];
 
 pub struct TypeChecker {
     result: TypeCheckResult,

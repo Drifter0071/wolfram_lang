@@ -2,7 +2,7 @@
   "name": "wolfram-lang",
   "displayName": "Wolfram Language",
   "description": "Wolfram language support for VS Code — syntax highlighting, intellisense, watch server, and Roblox project templates",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "wolfram",
   "license": "MIT",
   "repository": {

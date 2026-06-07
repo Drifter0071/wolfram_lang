@@ -33,6 +33,16 @@ impl<'a> Parser<'a> {
         format!("line {line}, column {col}")
     }
 
+    fn current_span(&self) -> Span {
+        let start = self.spans.get(self.pos).copied().unwrap_or(0);
+        let end = self
+            .spans
+            .get(self.pos.saturating_sub(1))
+            .copied()
+            .unwrap_or(start);
+        Span::new(end, end)
+    }
+
     fn err_expected(&self, expected: &str, found: &dyn std::fmt::Debug) -> String {
         format!(
             "{}: expected {}, found {:?}",
@@ -157,14 +167,14 @@ impl<'a> Parser<'a> {
                 self.advance();
                 self.semicolon_or_end()?;
                 Ok(Stmt::Break {
-                    span: Span::default(),
+                    span: self.current_span(),
                 })
             }
             Some(Token::Continue) => {
                 self.advance();
                 self.semicolon_or_end()?;
                 Ok(Stmt::Continue {
-                    span: Span::default(),
+                    span: self.current_span(),
                 })
             }
             Some(Token::Public) | Some(Token::Private) => self.parse_modifier_stmt(),
@@ -239,7 +249,7 @@ impl<'a> Parser<'a> {
             name,
             value,
             access: "private".into(),
-            span: Span::default(),
+            span: self.current_span(),
         })
     }
 
@@ -251,17 +261,18 @@ impl<'a> Parser<'a> {
             _ => return Err(self.err_msg("Expected function name")),
         };
         self.expect(Token::LParen)?;
-        let (params, param_defaults) = self.parse_param_list()?;
+        let (params, param_types, param_defaults) = self.parse_param_list()?;
         self.expect(Token::RParen)?;
         let block = self.parse_block()?;
         Ok(Stmt::FuncDef {
             name,
             params,
+            param_types,
             param_defaults,
             block,
             access: "private".into(),
             is_async: false,
-            span: Span::default(),
+            span: self.current_span(),
         })
     }
 
@@ -309,7 +320,7 @@ impl<'a> Parser<'a> {
             then_block,
             else_if_blocks,
             else_block,
-            span: Span::default(),
+            span: self.current_span(),
         })
     }
 
@@ -322,7 +333,7 @@ impl<'a> Parser<'a> {
         Ok(Stmt::While {
             cond,
             block,
-            span: Span::default(),
+            span: self.current_span(),
         })
     }
 
@@ -339,7 +350,7 @@ impl<'a> Parser<'a> {
             var,
             iter,
             block,
-            span: Span::default(),
+            span: self.current_span(),
         })
     }
 
@@ -352,7 +363,7 @@ impl<'a> Parser<'a> {
         self.semicolon_or_end()?;
         Ok(Stmt::Return {
             value,
-            span: Span::default(),
+            span: self.current_span(),
         })
     }
 
@@ -373,56 +384,62 @@ impl<'a> Parser<'a> {
             _ => return Err(self.err_msg("Expected function name")),
         };
         self.expect(Token::LParen)?;
-        let (params, param_defaults) = self.parse_param_list()?;
+        let (params, param_types, param_defaults) = self.parse_param_list()?;
         self.expect(Token::RParen)?;
         let block = self.parse_block()?;
         Ok(Stmt::FuncDef {
             name,
             params,
+            param_types,
             param_defaults,
             block,
             access: "private".into(),
             is_async,
-            span: Span::default(),
+            span: self.current_span(),
         })
     }
 
-    fn parse_param_list(&mut self) -> Result<(Vec<String>, Vec<Option<Expr>>), String> {
+    fn parse_param_list(&mut self) -> Result<(Vec<String>, Vec<Option<String>>, Vec<Option<Expr>>), String> {
         let mut params = Vec::new();
+        let mut param_types = Vec::new();
         let mut defaults = Vec::new();
         if self.peek() != Some(&Token::RParen) {
-            let (name, default) = self.parse_param()?;
+            let (name, param_type, default) = self.parse_param()?;
             params.push(name);
+            param_types.push(param_type);
             defaults.push(default);
             while self.peek() == Some(&Token::Comma) {
                 self.advance();
-                let (name, default) = self.parse_param()?;
+                let (name, param_type, default) = self.parse_param()?;
                 params.push(name);
+                param_types.push(param_type);
                 defaults.push(default);
             }
         }
-        Ok((params, defaults))
+        Ok((params, param_types, defaults))
     }
 
-    fn parse_param(&mut self) -> Result<(String, Option<Expr>), String> {
+    fn parse_param(&mut self) -> Result<(String, Option<String>, Option<Expr>), String> {
         let name = match self.advance() {
             Some(Token::Ident(n)) => n,
             _ => return Err(self.err_msg("Expected parameter name")),
         };
-        if self.peek() == Some(&Token::Colon) {
+        let param_type = if self.peek() == Some(&Token::Colon) {
             self.advance();
             match self.advance() {
-                Some(Token::Ident(_)) => {}
+                Some(Token::Ident(t)) => Some(t),
                 _ => return Err(self.err_msg("Expected type after colon in parameter")),
             }
-        }
+        } else {
+            None
+        };
         let default = if self.peek() == Some(&Token::Assign) {
             self.advance();
             Some(self.parse_expr()?)
         } else {
             None
         };
-        Ok((name, default))
+        Ok((name, param_type, default))
     }
 
     fn parse_class(&mut self) -> Result<Stmt, String> {
@@ -436,7 +453,7 @@ impl<'a> Parser<'a> {
             name,
             body,
             access: "private".into(),
-            span: Span::default(),
+            span: self.current_span(),
         })
     }
 
@@ -471,7 +488,7 @@ impl<'a> Parser<'a> {
             name,
             variants,
             access: "private".into(),
-            span: Span::default(),
+            span: self.current_span(),
         })
     }
 
@@ -508,7 +525,7 @@ impl<'a> Parser<'a> {
             name,
             fields,
             access: "private".into(),
-            span: Span::default(),
+            span: self.current_span(),
         })
     }
 
@@ -553,7 +570,7 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Import {
             path,
             alias,
-            span: Span::default(),
+            span: self.current_span(),
         })
     }
 
@@ -593,7 +610,7 @@ impl<'a> Parser<'a> {
             try_block,
             catch_clauses,
             finally_block,
-            span: Span::default(),
+            span: self.current_span(),
         })
     }
 
@@ -611,7 +628,7 @@ impl<'a> Parser<'a> {
         Ok(Stmt::DecoratedStmt {
             decorators,
             stmt,
-            span: Span::default(),
+            span: self.current_span(),
         })
     }
 
@@ -625,7 +642,7 @@ impl<'a> Parser<'a> {
                 target: expr,
                 value,
                 op: None,
-                span: Span::default(),
+                span: self.current_span(),
             })
         } else if self.peek() == Some(&Token::PlusAssign)
             || self.peek() == Some(&Token::MinusAssign)
@@ -647,13 +664,13 @@ impl<'a> Parser<'a> {
                 target: expr,
                 value,
                 op: Some(op.to_string()),
-                span: Span::default(),
+                span: self.current_span(),
             })
         } else {
             self.semicolon_or_end()?;
             Ok(Stmt::ExprStmt {
                 expr,
-                span: Span::default(),
+                span: self.current_span(),
             })
         }
     }
@@ -918,7 +935,7 @@ impl<'a> Parser<'a> {
                     .map_or(false, |t| matches!(t, Token::Ident(_) | Token::RParen));
                 if is_arrow {
                     let save_pos = self.pos;
-                    let (params, _param_defaults) = self.parse_param_list()?;
+                    let (params, _, _) = self.parse_param_list()?;
                     if self.peek() == Some(&Token::RParen) {
                         self.advance(); // )
                         if self.peek() == Some(&Token::Arrow) {
@@ -929,7 +946,7 @@ impl<'a> Parser<'a> {
                                 let expr = self.parse_expr()?;
                                 vec![Stmt::Return {
                                     value: Some(expr),
-                                    span: Span::default(),
+                                    span: self.current_span(),
                                 }]
                             };
                             return Ok(Expr::Function {
@@ -1015,7 +1032,7 @@ impl<'a> Parser<'a> {
 
             Some(Token::Function) => {
                 self.expect(Token::LParen)?;
-                let (params, _) = self.parse_param_list()?;
+                let (params, _, _) = self.parse_param_list()?;
                 self.expect(Token::RParen)?;
                 let block = self.parse_block()?;
                 Ok(Expr::Function { params, block })

@@ -1,6 +1,5 @@
 use crate::lsp::bindings::Bindings;
 use crate::lsp::store::DocumentStore;
-use crate::parser::Parser;
 use lsp_types::*;
 
 pub fn handle_completion(
@@ -919,33 +918,27 @@ pub fn handle_diagnostics(store: &mut DocumentStore, uri: &Url) -> Vec<Diagnosti
 
     if doc.ast.is_empty() {
         // Parse error — try to extract from source
-        let mut tokens = Vec::new();
-        let mut spans = Vec::new();
-        for (res, span) in logos::Logos::lexer(doc.source.as_str()).spanned() {
-            if let Ok(tok) = res {
-                tokens.push(tok);
-                spans.push(span.start);
+        match crate::tokenize_and_parse(&doc.source) {
+            Err(e) => {
+                let (line, col) = extract_line_col(&e);
+                diagnostics.push(Diagnostic {
+                    range: Range {
+                        start: Position {
+                            line: (line as u32).saturating_sub(1),
+                            character: (col as u32).saturating_sub(1),
+                        },
+                        end: Position {
+                            line: (line as u32).saturating_sub(1),
+                            character: (col as u32 + 20),
+                        },
+                    },
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    message: e,
+                    source: Some("wolfram".into()),
+                    ..Default::default()
+                });
             }
-        }
-        let mut parser = Parser::new(tokens, spans, &doc.source);
-        if let Err(e) = parser.parse_program() {
-            let (line, col) = extract_line_col(&e);
-            diagnostics.push(Diagnostic {
-                range: Range {
-                    start: Position {
-                        line: (line as u32).saturating_sub(1),
-                        character: (col as u32).saturating_sub(1),
-                    },
-                    end: Position {
-                        line: (line as u32).saturating_sub(1),
-                        character: (col as u32 + 20),
-                    },
-                },
-                severity: Some(DiagnosticSeverity::ERROR),
-                message: e,
-                source: Some("wolfram".into()),
-                ..Default::default()
-            });
+            _ => {}
         }
         return diagnostics;
     }

@@ -161,7 +161,7 @@ fn walk_stmt(stmt: &Stmt, source: &str, tokens: &mut Vec<InternalToken>, inside_
             walk_expr(iter, source, span.start, tokens);
             walk_stmts(block, source, tokens, inside_class);
         }
-        Stmt::FuncDef { name, params, param_defaults, block, access, is_async, span } => {
+        Stmt::FuncDef { name, params, param_types: _, param_defaults, block, access, is_async, span } => {
             // "public/private" keyword
             if access == "public" || access == "private" {
                 tokens.push(make_keyword_token(source, span, access));

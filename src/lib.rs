@@ -1,6 +1,7 @@
-#![allow(deprecated)]
 pub mod analyze;
 pub mod ast;
+pub mod constants;
+pub mod errors;
 pub mod generator;
 pub mod lexer;
 pub mod lsp;
@@ -12,42 +13,47 @@ pub mod roblox_context;
 pub mod rojo_config;
 pub mod scope;
 pub mod typeck;
+pub mod types;
 
+#[cfg(test)]
+mod tests;
+
+use crate::ast::Stmt;
 use generator::generate;
 use lexer::Token;
 use logos::Logos;
 use parser::Parser;
-use roblox_config::RobloxProjectConfig;
+use roblox_config::{DeploymentEntry, RobloxProjectConfig};
 use rojo_config::RojoPathMapping;
 use scope::ScopeAnalysis;
 
-pub fn check_scope(source_code: &str, file_path: &str) -> Vec<String> {
+pub const DEFAULT_OUT_DIR: &str = "out";
+
+pub fn tokenize_and_parse(source_code: &str) -> Result<Vec<Stmt>, String> {
     let mut tokens = Vec::new();
     let mut spans = Vec::new();
     for (res, span) in Token::lexer(source_code).spanned() {
         if let Ok(tok) = res {
+            if matches!(tok, Token::Comment(_)) {
+                continue;
+            }
             tokens.push(tok);
             spans.push(span.start);
         }
     }
     let mut parser = Parser::new(tokens, spans, source_code);
-    match parser.parse_program() {
+    parser.parse_program()
+}
+
+pub fn check_scope(source_code: &str, file_path: &str) -> Vec<String> {
+    match tokenize_and_parse(source_code) {
         Ok(ast) => ScopeAnalysis::analyze(&ast, source_code, file_path),
         Err(_) => vec![],
     }
 }
 
 pub fn check_types(source_code: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut spans = Vec::new();
-    for (res, span) in Token::lexer(source_code).spanned() {
-        if let Ok(tok) = res {
-            tokens.push(tok);
-            spans.push(span.start);
-        }
-    }
-    let mut parser = Parser::new(tokens, spans, source_code);
-    match parser.parse_program() {
+    match tokenize_and_parse(source_code) {
         Ok(ast) => {
             let tc = typeck::check_types(&ast);
             let mut msgs: Vec<String> = tc
@@ -66,13 +72,23 @@ pub fn check_types(source_code: &str) -> Vec<String> {
 /// `source_code` — full Wolfram source string.
 /// `file_path`   — display name used in error messages (e.g. "main.wrm").
 pub fn transpile(source_code: &str, file_path: &str) -> Result<String, String> {
-    transpile_inner(source_code, file_path, false, None, None, None, "out")
+    transpile_inner(
+        source_code,
+        file_path,
+        false,
+        None,
+        None,
+        None,
+        &[],
+        DEFAULT_OUT_DIR,
+    )
 }
 
 /// Transpile Wolfram → Luau in Roblox mode.
 /// `config` — parsed `wolfram.toml` roblox section.
 /// `importing_file` — path of the file being compiled (for import resolution).
 /// `rojo_mappings` — parsed from `default.project.json` if present.
+/// `deployments` — normalized deployment table from `wolfram.toml` [deployment].
 /// `out_dir` — output directory (e.g. "out").
 pub fn transpile_roblox(
     source_code: &str,
@@ -80,6 +96,7 @@ pub fn transpile_roblox(
     config: Option<&RobloxProjectConfig>,
     importing_file: &str,
     rojo_mappings: Option<&[RojoPathMapping]>,
+    deployments: &[DeploymentEntry],
     out_dir: &str,
 ) -> Result<String, String> {
     transpile_inner(
@@ -89,6 +106,7 @@ pub fn transpile_roblox(
         config,
         Some(importing_file),
         rojo_mappings,
+        deployments,
         out_dir,
     )
 }
@@ -100,19 +118,10 @@ fn transpile_inner(
     config: Option<&RobloxProjectConfig>,
     importing_file: Option<&str>,
     rojo_mappings: Option<&[RojoPathMapping]>,
+    deployments: &[DeploymentEntry],
     out_dir: &str,
 ) -> Result<String, String> {
-    let mut tokens = Vec::new();
-    let mut spans = Vec::new();
-    for (res, span) in Token::lexer(source_code).spanned() {
-        if let Ok(tok) = res {
-            tokens.push(tok);
-            spans.push(span.start);
-        }
-    }
-
-    let mut parser = Parser::new(tokens, spans, source_code);
-    let ast = match parser.parse_program() {
+    let ast = match tokenize_and_parse(source_code) {
         Ok(ast) => ast,
         Err(e) => return Err(format!("Parse error in '{}': {}", file_path, e)),
     };
@@ -153,6 +162,7 @@ fn transpile_inner(
         config,
         importing_file,
         rojo_mappings,
+        deployments,
         out_dir,
     );
 
@@ -183,6 +193,17 @@ pub struct LineMapEntry {
     pub luau_col: usize,
 }
 
+impl LineMapEntry {
+    pub fn new(wrm_line: usize, wrm_col: usize, luau_line: usize, luau_col: usize) -> Self {
+        Self {
+            wrm_line,
+            wrm_col,
+            luau_line,
+            luau_col,
+        }
+    }
+}
+
 /// Transpile Result with line mapping for LSP diagnostics.
 #[derive(Debug, Clone)]
 pub struct TranspileResult {
@@ -200,17 +221,7 @@ pub fn transpile_with_cache(
     roblox_mode: bool,
     importing_file: Option<&str>,
 ) -> TranspileResult {
-    let mut tokens = Vec::new();
-    let mut spans = Vec::new();
-    for (res, span) in Token::lexer(source_code).spanned() {
-        if let Ok(tok) = res {
-            tokens.push(tok);
-            spans.push(span.start);
-        }
-    }
-
-    let mut parser = Parser::new(tokens, spans, source_code);
-    let ast = match parser.parse_program() {
+    let ast = match tokenize_and_parse(source_code) {
         Ok(ast) => ast,
         Err(e) => {
             return TranspileResult {
@@ -243,19 +254,14 @@ pub fn transpile_with_cache(
         };
     }
 
-    // Generate Luau with line mapping
-    let out_dir = if importing_file.is_some() {
-        "out"
-    } else {
-        "out"
-    };
     let luau = generate(
         &ast,
         roblox_mode,
-        None, // config
-        importing_file.map(|s| s),
-        None, // rojo_mappings
-        out_dir,
+        None,
+        importing_file,
+        None,
+        &[],
+        DEFAULT_OUT_DIR,
     );
 
     // Build approximate line map: each wolfram source line maps to the same Luau line

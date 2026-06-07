@@ -1,76 +1,171 @@
 # Wolfram
 
-A Python/C#-inspired programming language that transpiles to [Luau](https://luau.org).
-Designed for Roblox game development with first-class VS Code support and seamless [Rojo](https://rojo.space/) integration.
+A Python/C#-inspired language that compiles to [Luau](https://luau.org) — purpose-built for Roblox game development with first-class VS Code support, Rojo integration, and intelligent Roblox instance-path resolution.
+
+---
+
+## Quick Start
+
+```bash
+cargo build --release                           # Build compiler
+
+wolfram my-project/                             # Transpile project
+wolfram src/main.wrm                            # Transpile single file
+wolfram --watch src/                            # Watch mode
+wolfram --analyze src/main.wrm                  # JSON diagnostics
+```
 
 ## Why Wolfram?
 
-Luau is powerful but verbose. Wolfram adds familiar syntax from Python and C# — bracket blocks, access modifiers, classes, structs, enums — while compiling to clean, idiomatic Luau that Rojo can sync directly into Roblox Studio.
+Wolfram gives Roblox developers the syntax they know from Python and C# — braces, classes, access modifiers, f-strings — while compiling to **clean, idiomatic Luau** that runs natively in Roblox Studio. No runtime overhead, no foreign patterns.
+
+### Before → After
+
+<table>
+<tr><th>Wolfram</th><th>Luau</th></tr>
+<tr>
+<td>
+
+```js
+import "../shared/HealthSystem"
+  as HealthSystemClass
+
+local health = HealthSystemClass.new(100)
+
+local disconnect = health
+  .HealthChanged:Connect(
+    function(current, max) {
+      print(f"Health: {current}/{max}")
+      if (current <= 0) {
+        print("Player died!")
+        disconnect()
+      }
+    }
+  )
+
+health:takeDamage(20)
+```
+
+</td>
+<td>
+
+```lua
+local RepStorage = game:GetService("ReplicatedStorage")
+local HealthSystemClass = require(RepStorage.Shared.HealthSystem)
+
+local health = HealthSystemClass.new(100)
+
+local disconnect = health.HealthChanged:Connect(function(current, max)
+    print(`Health: {current}/{max}`)
+    if current <= 0 then
+        print("Player died!")
+        disconnect()
+    end
+end)
+
+health:takeDamage(20)
+```
+
+</td>
+</tr>
+</table>
+
+---
+
+## Roblox Instance Path Resolution
+
+Wolfram understands Roblox's object hierarchy. No more hand-writing `game:GetService()` chains — the compiler resolves everything from your `wolfram.toml` deployment map.
+
+### `wolfram.toml` — Deployment Map
+
+```toml
+[deployment]
+"src/shared"    = "ReplicatedStorage.Shared"
+"src/server"    = "ServerScriptService.ServerModules"
+"src/client/ui" = "StarterPlayer.StarterPlayerScripts.UI"
+```
+
+### Four Resolution Strategies
+
+| Strategy | When | Example Output |
+|----------|------|---------------|
+| **Cross-Service** | Source & target in different Roblox services | `require(ReplicatedStorage.Shared.Utils)` with auto-generated `game:GetService("ReplicatedStorage")` |
+| **Sibling** | Same service, same parent instance | `require(script.Parent.Utils)` |
+| **Deep Nested** | Same service, different sub-paths | `require(ServerScriptService.Modules.Sub.Util)` |
+| **StarterPlayer** | Scripts that move at runtime | Always `script.Parent` chain (runtime-safe) |
+
+### Resolution Examples
+
+**Server requiring Shared** (cross-service):
+```js
+// src/server/GameLoop.wrm
+import "../shared/Config" as Config
+```
+```lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Config = require(ReplicatedStorage.Shared.Config)
+```
+
+**Client UI sibling** (StarterPlayer):
+```js
+// src/client/ui/MainMenu.wrm
+import "./Button" as Button
+```
+```lua
+local Button = require(script.Parent.Button)
+```
+
+**Shared sibling** (same container):
+```js
+// src/shared/GameModule.wrm
+import "./MathUtils" as MathUtils
+```
+```lua
+local MathUtils = require(script.Parent.MathUtils)
+```
+
+---
 
 ## Language Features
 
-| Feature | Wolfram | Luau |
-|---------|---------|------|
-| Blocks | `{ }` braces | `then … end` / `do … end` |
-| Classes | `class Name { }` + `public`/`private` | Manual metatable setup |
-| Structs | `struct Name { x, y, z }` | Manual table constructors |
-| Enums | `enum State { Lobby, Playing }` | `table.freeze({…})` |
-| Access modifiers | `public` / `private` | Convention only |
-| If statements | `if (cond) { }` | `if cond then … end` |
-| While loops | `while (cond) { }` | `while cond do … end` |
-| For loops | `for x in items { }` | `for _, x in ipairs(items) do … end` |
-| Type inference | Auto-detects arrays → `ipairs`, tables → `pairs` | Must manually choose |
-| Imports | `import "./lib" as lib` | `local lib = require(…)` |
-| Ternary | `cond ? a : b` | `if cond then a else b` (statement only) |
-| F-strings | `f"Hello {name}"` | `"Hello " .. name` |
-| Semicolons | Optional | Optional |
-| Comments | `--` | `--` |
+| Feature | Wolfram | Compiles to |
+|---------|---------|-------------|
+| **Blocks** | `{ }` braces | `then … end` / `do … end` |
+| **Classes** | `class Name { }` with `public`/`private` | Metatable-based OOP |
+| **Structs** | `struct Vec3 { x, y, z }` | Table constructor factories |
+| **Enums** | `enum State { Lobby, Playing }` | `table.freeze({…})` |
+| **Access mods** | `public` / `private` keywords | Private storage via `__private_*` tables |
+| **If/elif/else** | `if (cond) { }` | `if cond then … end` |
+| **While** | `while (cond) { }` | `while cond do … end` |
+| **For-in** | `for x in items { }` | Auto-detects `ipairs` vs `pairs` |
+| **For-range** | `for i in range(0, 10, 2)` | `for i = 0, 10 - 1, 2 do` |
+| **Ternary** | `cond ? a : b` | `if cond then a else b` (expression) |
+| **F-strings** | `f"Hello {name}"` | `` `Hello {name}` `` (Luau template literals) |
+| **Imports** | `import "./lib" as lib` | `local lib = require(…)` with path resolution |
+| **Type annotations** | `function f(x: number)` | Preserved in output for Luau type checker |
+| **Comments** | `-- comment` | `-- comment` |
+| **Decorators** | `@export variable` | Metadata for tooling |
+| **Try/catch** | `try { } catch(err) { }` | `pcall`-based error handling |
+| **List comprehensions** | `[x for x in items if x > 0]` | `table.insert` loop |
+| **Logical operators** | `and` / `or` / `not` | Native Lua operators |
 
-## Compiler
-
-```bash
-# Build from source (requires Rust)
-cargo build --release
-
-# Transpile a single file
-wolfram src/main.wrm              # → out/main.luau
-
-# Transpile a project directory
-wolfram src/                      # → out/**/*.luau
-
-# Watch mode — auto-transpile on every save
-wolfram --watch src/
-
-# Analyze mode — JSON diagnostics + symbols for tooling
-wolfram --analyze src/main.wrm
-```
+---
 
 ## VS Code Extension
-
-### Installation
-
-```bash
-cd vscode-extension
-npm install
-npx tsc -p tsconfig.json
-```
-
-Then press `F5` in VS Code to launch an Extension Development Host, or run `npx vsce package` to create a `.vsix` for installation.
 
 ### Features
 
 - **Syntax highlighting** — TextMate grammar for `.wrm` files
 - **Intellisense** — Keyword snippets, local symbols, function signatures
-
-- **Roblox API autocomplete** — Full Roblox class/type/enum bindings (849 types, 585 enums)
-- **Dot/colon completion** — `part:` shows Instance methods, `game.` shows DataModel properties
-- **Type tracking** — Infers variable types from assignments and method return values
-- **Diagnostics** — Compiler errors mapped to editor ranges, debounced 500ms
-- **Hover info** — Type signatures, parameter lists, documentation
-- **Go to definition** — Jump to symbol declarations within the file
-- **Document symbols** — Outline view of classes, functions, enums, structs
-- **Watch server** — Auto-transpile on every save via status bar toggle
-- **Project template** — Scaffolds a Rojo-ready project with client/shared/server structure
+- **Roblox API autocomplete** — 849 types, 585 enums from official API dump
+- **Dot/colon awareness** — `part:` shows Instance methods, `game.` shows DataModel properties
+- **Type inference** — Infers types from assignments and method returns
+- **Diagnostics** — Compiler errors mapped to editor, debounced 500ms
+- **Hover info** — Type signatures, parameters, documentation
+- **Go to definition** — Jump to symbol declarations
+- **Document symbols** — Outline view (classes, functions, enums, structs)
+- **Watch mode** — Auto-transpile on every save via status bar toggle
+- **Project template** — One-command scaffold with client/shared/server + Rojo config
 
 ### Commands
 
@@ -85,26 +180,28 @@ Then press `F5` in VS Code to launch an Extension Development Host, or run `npx 
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `wolfram.compilerPath` | `wolfram` | Path to the compiler binary |
-| `wolfram.watchOnOpen` | `true` | Auto-start watch server on `.wrm` workspace |
-| `wolfram.outputDir` | `out` | Output directory for compiled `.luau` files |
+| `wolfram.compilerPath` | `""` | Path to `wolfram.exe` |
+| `wolfram.watchOnOpen` | `true` | Auto-start watcher on `.wrm` workspace |
+| `wolfram.outputDir` | `"out"` | Output directory for `.luau` files |
 
-## Roblox + Rojo Integration
+---
 
-Wolfram is built for Rojo's file-based workflow. The `src/` directory structure is mirrored identically in `out/`, preserving every subdirectory and filename. Rojo reads `default.project.json` and syncs the compiled `.luau` files directly into Roblox Studio.
+## Project Structure
 
 ```
 my-game/
-├── wolfram.toml              Compiler + Roblox config
-├── default.project.json      Rojo project manifest
+├── wolfram.toml                 Compiler config + deployment map
+├── default.project.json         Rojo project manifest
 ├── src/
-│   ├── client/
-│   │   └── main.client.wrm   →  out/client/main.client.luau
-│   ├── shared/
-│   │   └── utils.shared.wrm  →  out/shared/utils.shared.luau
-│   └── server/
-│       └── main.server.wrm   →  out/server/main.server.luau
-└── out/                      Auto-generated, gitignored
+│   ├── client/                  StarterPlayer scripts
+│   │   └── ui/
+│   │       └── MainMenu.wrm
+│   ├── shared/                  ReplicatedStorage modules
+│   │   ├── Logger.wrm
+│   │   └── MathUtils.wrm
+│   └── server/                  ServerScriptService scripts
+│       └── ServerMain.wrm
+└── out/                         Auto-generated Luau (gitignored)
     ├── client/
     ├── shared/
     └── server/
@@ -113,21 +210,14 @@ my-game/
 ### How it works
 
 1. Write `.wrm` files in `src/` under `client/`, `shared/`, or `server/`
-2. The watcher transpiles to identically-structured `out/`
-3. Rojo reads `default.project.json` and syncs `out/` into Roblox Studio
-4. `.client.luau` / `.server.luau` file naming tells Roblox which runtime to use
-5. `init.luau` files become folder-named instances (Rojo's `init` convention)
-6. Nested subdirectories are fully supported (e.g. `src/client/ui/components/`)
+2. The watcher/compiler reads `wolfram.toml` to resolve Roblox instance paths
+3. Service declarations (`game:GetService`) are auto-injected at the top of each output
+4. Transpiled `.luau` goes to identically-structured `out/`
+5. Rojo reads `default.project.json` and syncs `out/` into Roblox Studio
+6. `.client.wrm` / `.server.wrm` suffixes control script type (LocalScript vs Script)
+7. Nested subdirectories are fully supported
 
-### wolfram.toml
-
-```toml
-[[roblox.mappings]]
-source = "src/**/*.wrm"
-target = "out"
-```
-
-### default.project.json
+### `default.project.json`
 
 ```json
 {
@@ -136,153 +226,156 @@ target = "out"
     "$className": "DataModel",
     "ReplicatedStorage": {
       "$className": "ReplicatedStorage",
-      "Shared": {
-        "$path": "out/shared"
-      }
+      "Shared": { "$path": "out/shared" }
     },
     "ServerScriptService": {
       "$className": "ServerScriptService",
-      "Server": {
-        "$path": "out/server"
-      }
+      "Server": { "$path": "out/server" }
     },
     "StarterPlayer": {
       "$className": "StarterPlayer",
       "StarterPlayerScripts": {
         "$className": "StarterPlayerScripts",
-        "Client": {
-          "$path": "out/client"
-        }
+        "Client": { "$path": "out/client" }
       }
     }
   }
 }
 ```
 
+---
+
 ## Language Reference
 
-### Variables
+### Variables & Assignment
 
-```
+```js
 local x = 42
+local name             // nil by default
 x = 100
-local name             -- nil by default
+x += 1                 // compound assignment
 ```
 
 ### Functions
 
-```
-function greet(name) {
-    return "Hello, " .. name
+```js
+function greet(name: string): string {
+    return f"Hello, {name}"
 }
 
--- With access modifiers
-public function get_player(id) {
+public function getPlayer(id: number) {
     return players[id]
 }
 
-private function internal_calc() {
+private function internalCalc() {
     return 0
-}
-```
-
-### Control Flow
-
-```
-if (score > 100) {
-    print("Winner!")
-} else if (score > 50) {
-    print("Almost")
-} else {
-    print("Keep trying")
-}
-
-while (timer > 0) {
-    timer = timer - 1
-}
-
-for i in range(1, 10) {
-    print(i)
-}
-
-for player in players {
-    player:Kick()
 }
 ```
 
 ### Classes
 
-```
+```js
 class PlayerData {
     local score = 0
     local name = ""
 
-    public function init(n, s) {
+    public function init(n: string, s: number) {
         name = n
         score = s
     }
 
-    public function add_score(points) {
-        score = score + points
+    public function addScore(points: number) {
+        score += points
     }
 
-    private function recalc() {
-        -- internal logic
+    private function recalculate() {
+        // internal
     }
 }
 
--- Usage
-local data = PlayerData.new("Player1", 100)
-data:add_score(50)
+let data = PlayerData.new("Player1", 100)
+data:addScore(50)
 ```
 
 ### Structs
 
-```
-struct Position {
-    x, y, z
+```js
+struct Vec3 {
+    x: number, y: number, z: number
 }
 
-local pos = Position.new(1, 2, 3)
+let pos = Vec3.new(1, 2, 3)
 print(pos.x)
 ```
 
 ### Enums
 
-```
+```js
 enum GameState {
     Lobby,
     Playing,
     Ended
 }
 
-local state = GameState.Lobby
+let state = GameState.Lobby
+```
+
+### Control Flow
+
+```js
+if (score > 100) {
+    print("Winner!")
+} elif (score > 50) {
+    print("Almost")
+} else {
+    print("Try again")
+}
+
+while (timer > 0) {
+    timer -= 1
+}
+
+for i in range(1, 10) {
+    print(i)
+}
+
+for player in players {             // auto-detects ipairs(pairs)
+    player:Kick()
+}
 ```
 
 ### Imports
 
-```
-import "./player_data" as PlayerData
-
-local data = PlayerData.new("Test", 0)
-```
-
-### Ternary
-
-```
-local status = score > 50 ? "Pass" : "Fail"
+```js
+import "../shared/Config" as Config       // relative (deployment-resolved)
+import "src/shared/Utils" as Utils       // project-root-relative
+import "./MathUtils" as MathUtils        // same directory
 ```
 
-### F-Strings
+### Ternary & F-Strings
 
+```js
+let status = score > 50 ? "Pass" : "Fail"
+let msg = f"Player {name} has {score} points"
 ```
-local msg = f"Player {name} has {score} points"
+
+### Error Handling
+
+```js
+try {
+    riskyCall()
+} catch (err) {
+    print(f"Failed: {err}")
+} finally {
+    cleanup()
+}
 ```
+
+---
 
 ## Custom API Bindings (`.wold`)
 
-Wolfram supports user-definable type declarations for custom libraries.
-Drop a `.wold` file in your project root — the LSP auto-discovers it on workspace open.
+Define type declarations for custom libraries — the LSP auto-discovers `.wold` files on workspace open.
 
 ```json
 {
@@ -291,7 +384,11 @@ Drop a `.wold` file in your project root — the LSP auto-discovers it on worksp
     {
       "name": "MyLibrary",
       "methods": [
-        { "name": "do_thing", "params": [{ "name": "x", "type": "number" }], "returns": "string" }
+        {
+          "name": "doThing",
+          "params": [{ "name": "x", "type": "number" }],
+          "returns": "string"
+        }
       ]
     }
   ],
@@ -301,48 +398,57 @@ Drop a `.wold` file in your project root — the LSP auto-discovers it on worksp
 }
 ```
 
-This adds `MY_LIB` to autocomplete, with `:do_thing(x)` showing the correct parameter and return type.
-
-The built-in Roblox bindings are auto-generated from the [official API dump](https://github.com/CloneTrooper1019/Roblox-Client-Tracker). To regenerate:
+Regenerate built-in Roblox bindings from the official API dump:
 
 ```bash
 node vscode-extension/generator/generate.js
 ```
 
-## Project Structure
+---
+
+## Compiler Architecture
 
 ```
-wolfram_lang/
-├── Cargo.toml                   Rust crate manifest
-├── Cargo.lock                   Dependency lockfile
-├── .gitignore
-├── src/                         Compiler source
-│   ├── main.rs                  CLI entry point (dispatch)
-│   ├── lib.rs                   Library API (transpile, analyze)
-│   ├── lexer.rs                 Tokenizer (logos-based)
-│   ├── parser.rs                Recursive descent parser
-│   ├── ast.rs                   AST node definitions with source spans
-│   ├── generator.rs             AST → Luau code generator
-│   ├── cli.rs                   CLI helpers (transpile_project, collect_files)
-│   ├── watch.rs                 File watcher (notify-based)
-│   ├── analyze.rs               JSON symbol/diagnostic extractor for LSP
-│   └── roblox_config.rs         wolfram.toml parser + import resolver
-└── vscode-extension/            VS Code extension
-    ├── package.json
-    ├── tsconfig.json
-    ├── language-configuration.json
-    ├── src/
-    │   ├── extension.ts         Activation, LSP client, watch server lifecycle
-    │   ├── server.ts            LSP server: completion, hover, diagnostics, symbols, go-to-def
-    │   ├── bindings.ts          .wold type bindings loader + query engine
-    │   ├── types.ts             .wold format TypeScript types
-    │   └── syntaxes/
-    │       └── wolfram.tmLanguage.json   TextMate grammar
-    ├── generator/
-    │   └── generate.js          Roblox API dump → .wold converter
-    └── templates/
-        └── new-project/         Project scaffold (client/shared/server + Rojo config)
+Source (.wrm)
+  → Tokenizer (logos) → 40+ token types
+  → Parser (recursive descent) → AST with source spans
+  → Validation (4-phase Luau Checker)
+  → Generator → Luau output (.luau)
 ```
+
+### Source Layout
+
+```
+src/
+├── main.rs                  CLI entry point
+├── lib.rs                   Library API (transpile, analyze, LSP)
+├── lexer.rs                 Tokenizer (logos-based)
+├── parser.rs                Recursive descent parser
+├── ast.rs                   AST node definitions with source spans
+├── generator.rs             AST → Luau code emitter
+├── roblox_config.rs         wolfram.toml parser + deployment resolver
+├── roblox_context.rs        Script type detection (client/server/shared)
+├── roblox_api.rs            Roblox API service definitions
+├── rojo_config.rs           Rojo default.project.json parser
+├── constants.rs             Shared globals, service lists, path utils
+├── types.rs                 Unified InferredType enum
+├── errors.rs                TranspilerError hierarchy
+├── typeck.rs                Type checker
+├── scope.rs                 Scope analysis
+├── analyze.rs               JSON diagnostics extractor
+├── luau_checker.rs          Luau validation engine
+├── cli.rs                   CLI helpers (project transpile, file collection)
+├── watch.rs                 File watcher (notify-based)
+├── tests.rs                 Unit tests (18 tests)
+└── lsp/
+    ├── mod.rs
+    ├── handlers.rs          LSP request handlers
+    ├── store.rs             Document store + line mapping
+    ├── symbols.rs           Document symbol provider
+    └── semantic_tokens.rs   Semantic token highlighting
+```
+
+---
 
 ## License
 

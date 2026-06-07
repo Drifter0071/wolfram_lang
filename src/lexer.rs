@@ -153,8 +153,8 @@ pub enum Token {
     #[regex(r#""([^"\\]|\\.)*""#, |lex| lex.slice().to_string())]
     StringLit(String),
 
-    #[regex(r"--[^\n]*", logos::skip, allow_greedy = true)]
-    Comment,
+    #[regex(r"--[^\n]*", |lex| lex.slice().to_string(), allow_greedy = true)]
+    Comment(String),
 
     #[regex(r"[ \t\n\f]+", logos::skip)]
     Whitespace,

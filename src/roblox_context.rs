@@ -1,3 +1,5 @@
+use crate::constants::{CLIENT_ONLY_SERVICES, SERVER_ONLY_SERVICES};
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ScriptType {
     Server,
@@ -25,22 +27,6 @@ impl ScriptType {
         }
     }
 }
-
-const SERVER_ONLY_SERVICES: &[&str] = &[
-    "ServerScriptService",
-    "ServerStorage",
-    "DataStoreService",
-    "MessagingService",
-    "PathfindingService",
-];
-
-const CLIENT_ONLY_SERVICES: &[&str] = &[
-    "UserInputService",
-    "GuiService",
-    "HapticService",
-    "ContextActionService",
-    "StarterGui",
-];
 
 pub fn check_api_access(script_type: ScriptType, service_name: &str) -> Option<String> {
     match script_type {

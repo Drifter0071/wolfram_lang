@@ -1,3 +1,4 @@
+use crate::constants::normalize_path;
 use serde::Deserialize;
 use std::fs;
 use std::path::Path;
@@ -279,18 +280,4 @@ impl RojoPathMapping {
             _ => None,
         }
     }
-}
-
-fn normalize_path(path: &str) -> String {
-    let mut parts: Vec<&str> = Vec::new();
-    for seg in path.split('/') {
-        match seg {
-            "" | "." => continue,
-            ".." => {
-                parts.pop();
-            }
-            _ => parts.push(seg),
-        }
-    }
-    parts.join("/")
 }

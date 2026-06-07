@@ -1,9 +1,6 @@
 use serde::Serialize;
 
 use crate::ast::{Span, Stmt};
-use crate::lexer::Token;
-use crate::parser::Parser;
-use logos::Logos;
 
 #[derive(Debug, Serialize)]
 pub struct AnalyzeResult {
@@ -23,7 +20,7 @@ pub struct Diagnostic {
     pub suggestion: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Symbol {
     pub name: String,
     pub kind: String,
@@ -35,7 +32,7 @@ pub struct Symbol {
     pub fields: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct SourceLocation {
     pub line: usize,
     pub column: usize,
@@ -43,7 +40,7 @@ pub struct SourceLocation {
     pub end_column: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ImportInfo {
     pub path: String,
     pub alias: String,
@@ -168,17 +165,7 @@ pub fn extract_imports(stmts: &[Stmt]) -> Vec<ImportInfo> {
 }
 
 pub fn analyze(source: &str, _file_path: &str) -> AnalyzeResult {
-    let mut tokens = Vec::new();
-    let mut spans = Vec::new();
-    for (res, span) in Token::lexer(source).spanned() {
-        if let Ok(tok) = res {
-            tokens.push(tok);
-            spans.push(span.start);
-        }
-    }
-
-    let mut parser = Parser::new(tokens, spans, source);
-    match parser.parse_program() {
+    match crate::tokenize_and_parse(source) {
         Ok(stmts) => AnalyzeResult {
             ok: true,
             diagnostics: vec![],

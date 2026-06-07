@@ -1,4 +1,5 @@
 use crate::ast::{Expr, Stmt};
+use crate::constants::ROBLOX_GLOBALS;
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -18,8 +19,8 @@ impl ScopeAnalysis {
             scopes: vec![Scope::default()],
         };
 
-        // Pre-populate globals: Roblox services + common builtins
-        for g in GLOBALS {
+        // Pre-populate globals
+        for g in ROBLOX_GLOBALS {
             analyzer.scopes[0].variables.insert(g.to_string(), true);
         }
 
@@ -289,93 +290,3 @@ fn is_keyword_or_builtin(name: &str) -> bool {
             | "is"
     )
 }
-
-const GLOBALS: &[&str] = &[
-    "game",
-    "workspace",
-    "script",
-    "print",
-    "warn",
-    "error",
-    "Players",
-    "ReplicatedStorage",
-    "ServerScriptService",
-    "ServerStorage",
-    "StarterPlayer",
-    "StarterGui",
-    "StarterPack",
-    "Lighting",
-    "SoundService",
-    "RunService",
-    "UserInputService",
-    "ContextActionService",
-    "TweenService",
-    "CollectionService",
-    "HttpService",
-    "TeleportService",
-    "MarketplaceService",
-    "DataStoreService",
-    "MessagingService",
-    "PathfindingService",
-    "PhysicsService",
-    "Teams",
-    "Chat",
-    "LocalizationService",
-    "SocialService",
-    "GroupService",
-    "PolicyService",
-    "AnalyticsService",
-    "AvatarEditorService",
-    "BadgeService",
-    "MemoryStoreService",
-    "TextService",
-    "GuiService",
-    "HapticService",
-    "Enum",
-    "Vector3",
-    "Vector2",
-    "CFrame",
-    "UDim2",
-    "UDim",
-    "Color3",
-    "BrickColor",
-    "TweenInfo",
-    "RaycastParams",
-    "Region3",
-    "Rect",
-    "NumberRange",
-    "NumberSequence",
-    "ColorSequence",
-    "Ray",
-    "DateTime",
-    "Buffer",
-    "Instance",
-    "PhysicalProperties",
-    "Random",
-    "Axes",
-    "Faces",
-    "math",
-    "string",
-    "table",
-    "os",
-    "task",
-    "coroutine",
-    "debug",
-    "utf8",
-    "bit32",
-    "buffer",
-    "typeof",
-    "ipairs",
-    "pairs",
-    "next",
-    "rawget",
-    "rawset",
-    "setmetatable",
-    "getmetatable",
-    "pcall",
-    "xpcall",
-    "tostring",
-    "tonumber",
-    "type",
-    "require",
-];

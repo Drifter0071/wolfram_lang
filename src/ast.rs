@@ -138,6 +138,7 @@ pub enum Stmt {
     FuncDef {
         name: String,
         params: Vec<String>,
+        param_types: Vec<Option<String>>,
         param_defaults: Vec<Option<Expr>>,
         block: Vec<Stmt>,
         access: String,

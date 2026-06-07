@@ -1,7 +1,5 @@
 use crate::ast::Stmt;
-use crate::lexer::Token;
-use crate::parser::Parser;
-use logos::Logos;
+use crate::LineMapEntry;
 use lsp_types::Url;
 use std::collections::HashMap;
 
@@ -10,24 +8,6 @@ pub struct DocumentStore {
 }
 
 #[derive(Debug, Clone)]
-pub struct LineMapEntry {
-    pub wrm_line: usize,
-    pub wrm_col: usize,
-    pub luau_line: usize,
-    pub luau_col: usize,
-}
-
-impl LineMapEntry {
-    pub fn new(wrm_line: usize, wrm_col: usize, luau_line: usize, luau_col: usize) -> Self {
-        Self {
-            wrm_line,
-            wrm_col,
-            luau_line,
-            luau_col,
-        }
-    }
-}
-
 pub struct DocumentState {
     pub uri: Url,
     pub source: String,
@@ -42,7 +22,7 @@ pub struct DocumentState {
     pub last_change_end: Option<usize>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug, Clone)]
 pub struct ScopeMap {
     pub variables: HashMap<String, String>,
 }
@@ -142,17 +122,7 @@ impl DocumentStore {
 }
 
 pub fn parse_document(uri: &Url, source: String) -> DocumentState {
-    let mut tokens = Vec::new();
-    let mut spans = Vec::new();
-    for (res, span) in Token::lexer(&source).spanned() {
-        if let Ok(tok) = res {
-            tokens.push(tok);
-            spans.push(span.start);
-        }
-    }
-
-    let mut parser = Parser::new(tokens, spans, &source);
-    let ast = parser.parse_program().unwrap_or_default();
+    let ast = crate::tokenize_and_parse(&source).unwrap_or_default();
     let symbols = crate::analyze::extract_symbols(&ast, &source);
     let imports = crate::analyze::extract_imports(&ast);
     let scope = extract_scope(&ast, &source);

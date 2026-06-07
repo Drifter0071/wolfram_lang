@@ -1,9 +1,13 @@
+use crate::constants::normalize_path;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WolframConfig {
     #[serde(default)]
     pub roblox: RobloxProjectConfig,
+    #[serde(default)]
+    pub deployment: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -18,13 +22,231 @@ pub struct RobloxMapping {
     pub target: String,
 }
 
+// ─── Deployment Path Model ───────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct DeploymentEntry {
+    pub source_dir: String,
+    pub service: String,
+    pub sub_path: Vec<String>,
+}
+
+impl DeploymentEntry {
+    pub fn instance_path(&self) -> String {
+        let mut parts = vec![self.service.as_str()];
+        parts.extend(self.sub_path.iter().map(|s| s.as_str()));
+        parts.join(".")
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ScriptLocation {
+    pub service: String,
+    pub instance_segments: Vec<String>,
+    pub module_name: String,
+}
+
+impl ScriptLocation {
+    pub fn instance_prefix(&self) -> Vec<String> {
+        let mut v = vec![self.service.as_str()];
+        v.extend(self.instance_segments.iter().map(|s| s.as_str()));
+        v.into_iter().map(|s| s.to_string()).collect()
+    }
+}
+
+// ─── Config Normalization ────────────────────────────────────────────
+
+pub fn normalize_deployments(
+    deployment_map: &HashMap<String, String>,
+) -> Vec<DeploymentEntry> {
+    let mut entries: Vec<DeploymentEntry> = Vec::new();
+    for (key, val) in deployment_map {
+        let norm_key = normalize_path(key);
+        let norm_val = val.replace('\\', "/");
+        let parts: Vec<&str> = norm_val.split('.').collect();
+        if parts.is_empty() {
+            continue;
+        }
+        entries.push(DeploymentEntry {
+            source_dir: norm_key,
+            service: parts[0].to_string(),
+            sub_path: parts[1..].iter().map(|s| s.to_string()).collect(),
+        });
+    }
+    entries
+}
+
+// ─── Instance Location Resolution ────────────────────────────────────
+
+pub fn resolve_script_location(
+    file_path: &str,
+    deployments: &[DeploymentEntry],
+    mappings: &[RobloxMapping],
+) -> Option<ScriptLocation> {
+    let normalized = normalize_path(file_path);
+
+    // Try deployment map first
+    for dep in deployments {
+        let prefix = if dep.source_dir.ends_with('/') {
+            dep.source_dir.clone()
+        } else {
+            format!("{}/", dep.source_dir)
+        };
+
+        if normalized == dep.source_dir
+            || normalized.starts_with(&prefix)
+        {
+            let rel = normalized[dep.source_dir.len()..].trim_start_matches('/');
+            let name = rel
+                .rsplit('/')
+                .next()
+                .unwrap_or(rel)
+                .strip_suffix(".wrm")
+                .unwrap_or(rel)
+                .to_string();
+
+            let mut extra_segments: Vec<String> = if let Some(slash) = rel.rfind('/') {
+                rel[..slash]
+                    .split('/')
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            let mut instance_segments = dep.sub_path.clone();
+            instance_segments.append(&mut extra_segments);
+
+            return Some(ScriptLocation {
+                service: dep.service.clone(),
+                instance_segments,
+                module_name: name,
+            });
+        }
+    }
+
+    // Fall back to legacy mappings
+    if let Some(resolved) = resolve_target_path_legacy(&normalized, mappings) {
+        let service = resolved
+            .target_instance
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        let instance_segments = if resolved.target_instance.len() > 1 {
+            resolved.target_instance[1..].to_vec()
+        } else {
+            Vec::new()
+        };
+        return Some(ScriptLocation {
+            service,
+            instance_segments,
+            module_name: resolved.target_name,
+        });
+    }
+
+    None
+}
+
+// ─── Path Strategy ───────────────────────────────────────────────────
+
+pub enum RequireStrategy {
+    CrossService {
+        service_variable: String,
+        instance_path: String,
+        module_name: String,
+    },
+    Sibling {
+        module_name: String,
+    },
+    DeepNested {
+        service_variable: String,
+        instance_path: String,
+        module_name: String,
+    },
+    StarterPlayerRelative {
+        chain: String,
+    },
+}
+
+fn is_starter_player(service: &str) -> bool {
+    service == "StarterPlayer" || service == "StarterCharacterScripts" || service == "StarterPlayerScripts"
+}
+
+pub fn get_require_path(
+    source: &ScriptLocation,
+    target: &ScriptLocation,
+) -> (String, Option<String>) {
+    // Scenario A: Cross-Service — different Roblox services
+    if source.service != target.service {
+        let mut parts = vec![target.service.as_str()];
+        parts.extend(target.instance_segments.iter().map(|s| s.as_str()));
+        parts.push(&target.module_name);
+        let full = parts.join(".");
+        return (full, Some(target.service.clone()));
+    }
+
+    // Same service
+    let svc = &source.service;
+
+    // Scenario D: StarterPlayer — paths change at runtime, must use script.Parent chain
+    if is_starter_player(svc) {
+        let relative_parts = build_relative_chain(source, target);
+        return (relative_parts, None);
+    }
+
+    // Scenario B: Sibling — same parent instance (e.g., both directly under ReplicatedStorage.Shared)
+    if source.instance_segments == target.instance_segments {
+        let escaped = target.module_name.replace('.', "_");
+        return (format!("script.Parent.{}", escaped), None);
+    }
+
+    // Scenario C: Deep nested same container — use absolute service variable path
+    let mut parts = vec![svc.as_str()];
+    parts.extend(target.instance_segments.iter().map(|s| s.as_str()));
+    parts.push(&target.module_name);
+    let full = parts.join(".");
+    (full, Some(svc.clone()))
+}
+
+fn build_relative_chain(source: &ScriptLocation, target: &ScriptLocation) -> String {
+    let src_len = source.instance_segments.len();
+    let common_len = source
+        .instance_segments
+        .iter()
+        .zip(target.instance_segments.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let ups = src_len - common_len;
+    let mut chain = String::from("script");
+    for _ in 0..=ups {
+        chain.push_str(".Parent");
+    }
+
+    for seg in &target.instance_segments[common_len..] {
+        chain.push('.');
+        chain.push_str(seg);
+    }
+
+    chain.push('.');
+    chain.push_str(&target.module_name.replace('.', "_"));
+
+    chain
+}
+
+// ─── Legacy Path Resolution (wolfram.toml [roblox] mappings) ─────────
+
 #[derive(Debug, Clone)]
 pub struct ResolvedMapping {
     pub target_instance: Vec<String>,
     pub target_name: String,
 }
 
-pub fn resolve_target_path(file_path: &str, mappings: &[RobloxMapping]) -> Option<ResolvedMapping> {
+fn resolve_target_path_legacy(
+    file_path: &str,
+    mappings: &[RobloxMapping],
+) -> Option<ResolvedMapping> {
     let normalized = file_path.replace('\\', "/");
 
     for mapping in mappings {
@@ -101,25 +323,14 @@ pub fn resolve_target_path(file_path: &str, mappings: &[RobloxMapping]) -> Optio
     None
 }
 
-fn normalize_path(path: &str) -> String {
-    let mut parts: Vec<&str> = Vec::new();
-    for seg in path.split('/') {
-        match seg {
-            "" | "." => continue,
-            ".." => {
-                parts.pop();
-            }
-            _ => parts.push(seg),
-        }
-    }
-    parts.join("/")
-}
+// ─── Import Resolution (combines deployment + legacy + Rojo) ─────────
 
 pub fn resolve_import(
     importing_file: &str,
     import_path: &str,
-    mappings: &[RobloxMapping],
-) -> Option<String> {
+    config: &RobloxProjectConfig,
+    deployments: &[DeploymentEntry],
+) -> Option<(String, Option<String>)> {
     let normalized_current = normalize_path(importing_file);
     let clean_path = import_path.trim_start_matches("./").trim_start_matches('/');
 
@@ -138,55 +349,46 @@ pub fn resolve_import(
     };
 
     let resolved = normalize_path(&resolved);
-
-    if !resolved.ends_with(".wrm") {
-        let with_ext = format!("{}.wrm", resolved);
-        if let (Some(current_target), Some(import_target)) = (
-            resolve_target_path(&normalized_current, mappings),
-            resolve_target_path(&with_ext, mappings),
-        ) {
-            return Some(build_require_path(
-                &current_target.target_instance,
-                &import_target,
-            ));
-        }
-    }
-
-    let (current_target, import_target) = (
-        resolve_target_path(&normalized_current, mappings)?,
-        resolve_target_path(&resolved, mappings)?,
-    );
-    Some(build_require_path(
-        &current_target.target_instance,
-        &import_target,
-    ))
-}
-
-fn build_require_path(current: &[String], imported: &ResolvedMapping) -> String {
-    let instance_path = imported.target_instance.join(".");
-    let escaped_name = imported.target_name.replace('.', "_");
-
-    if current == imported.target_instance.as_slice() {
-        format!("script.Parent.{}", escaped_name)
+    let with_ext = if !resolved.ends_with(".wrm") {
+        format!("{}.wrm", resolved)
     } else {
-        format!("{}.{}", instance_path, escaped_name)
-    }
+        resolved.clone()
+    };
+
+    let source_loc = resolve_script_location(&normalized_current, deployments, &config.mappings)?;
+    let target_loc = resolve_script_location(&with_ext, deployments, &config.mappings)?;
+
+    Some(get_require_path(&source_loc, &target_loc))
 }
 
-pub fn resolve_project_import(import_path: &str, mappings: &[RobloxMapping]) -> Option<String> {
+pub fn resolve_project_import(
+    import_path: &str,
+    config: &RobloxProjectConfig,
+    deployments: &[DeploymentEntry],
+) -> Option<(String, Option<String>)> {
     let clean = import_path.trim_start_matches("./").trim_start_matches('/');
-    let candidates = vec![
-        format!("src/{}.wrm", clean),
-        format!("src/{}.shared.wrm", clean),
-        format!("src/{}.server.wrm", clean),
-        format!("src/{}.client.wrm", clean),
-    ];
+    let candidates = if clean.starts_with("src/") {
+        vec![
+            format!("{}.wrm", clean),
+            format!("{}.shared.wrm", clean),
+            format!("{}.server.wrm", clean),
+            format!("{}.client.wrm", clean),
+        ]
+    } else {
+        vec![
+            format!("src/{}.wrm", clean),
+            format!("src/{}.shared.wrm", clean),
+            format!("src/{}.server.wrm", clean),
+            format!("src/{}.client.wrm", clean),
+        ]
+    };
 
     for cand in &candidates {
-        if let Some(target) = resolve_target_path(cand, mappings) {
-            let instance_path = target.target_instance.join(".");
-            let escaped_name = target.target_name.replace('.', "_");
-            return Some(format!("{}.{}", instance_path, escaped_name));
+        if let Some(target) = resolve_script_location(cand, deployments, &config.mappings) {
+            let mut parts = vec![target.service.clone()];
+            parts.extend(target.instance_segments);
+            parts.push(target.module_name.clone());
+            return Some((parts.join("."), Some(target.service.clone())));
         }
     }
     None

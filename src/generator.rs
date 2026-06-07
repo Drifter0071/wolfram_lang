@@ -1,22 +1,15 @@
 use crate::ast::{Expr, Stmt, TableField};
+use crate::constants::ROBLOX_GLOBALS;
 use crate::roblox_config::{
-    extract_service_name, resolve_import, resolve_project_import, RobloxProjectConfig,
+    resolve_import, resolve_project_import, DeploymentEntry, RobloxProjectConfig,
 };
 use crate::rojo_config::RojoPathMapping;
+use crate::types::InferredType;
 use std::collections::HashSet;
 
 // ==========================================
 // 4. THE GENERATOR (JSON AST -> Luau)
 // ==========================================
-#[derive(Debug, Clone, PartialEq)]
-enum InferredType {
-    Array,
-    Table,
-    Number,
-    String,
-    Bool,
-    Unknown,
-}
 
 struct GenContext {
     class_name: Option<String>,
@@ -26,80 +19,11 @@ struct GenContext {
     roblox_mode: bool,
     roblox_config: Option<RobloxProjectConfig>,
     rojo_mappings: Option<Vec<RojoPathMapping>>,
+    deployments: Vec<DeploymentEntry>,
     out_dir: String,
     importing_file: Option<String>,
     services: Vec<String>,
 }
-
-const ROBLOX_GLOBALS: &[&str] = &[
-    "game",
-    "workspace",
-    "script",
-    "Players",
-    "ReplicatedStorage",
-    "ServerScriptService",
-    "ServerStorage",
-    "StarterPlayer",
-    "StarterGui",
-    "Lighting",
-    "SoundService",
-    "RunService",
-    "UserInputService",
-    "ContextActionService",
-    "TweenService",
-    "CollectionService",
-    "HttpService",
-    "TeleportService",
-    "MarketplaceService",
-    "DataStoreService",
-    "MessagingService",
-    "PathfindingService",
-    "PhysicsService",
-    "Teams",
-    "Chat",
-    "LocalizationService",
-    "SocialService",
-    "VRService",
-    "GroupService",
-    "PolicyService",
-    "AnalyticsService",
-    "AvatarEditorService",
-    "BadgeService",
-    "MemoryStoreService",
-    "TextService",
-    "GuiService",
-    "HapticService",
-    "Instance",
-    "Vector3",
-    "Vector2",
-    "CFrame",
-    "UDim2",
-    "UDim",
-    "Color3",
-    "BrickColor",
-    "TweenInfo",
-    "RaycastParams",
-    "Region3",
-    "Rect",
-    "NumberRange",
-    "NumberSequence",
-    "ColorSequence",
-    "Enum",
-    "Axes",
-    "Faces",
-    "PhysicalProperties",
-    "Random",
-    "math",
-    "string",
-    "table",
-    "os",
-    "task",
-    "coroutine",
-    "debug",
-    "utf8",
-    "bit32",
-    "buffer",
-];
 
 impl GenContext {
     fn push_scope(&mut self) {
@@ -132,19 +56,22 @@ impl GenContext {
     fn resolve_roblox_import(&mut self, import_path: &str, alias: &str) -> String {
         let importing = self.importing_file.as_deref().unwrap_or("");
 
-        let resolve_success = |require_path: String, services: &mut Vec<String>| -> String {
-            let svc = extract_service_name(&require_path);
-            if svc != "script" && !services.contains(&svc.to_string()) {
-                services.push(svc.to_string());
-            }
-            format!("local {} = require({})\n", alias, require_path)
-        };
+        let mut require_line =
+            |path: String, svc: Option<String>| -> String {
+                if let Some(svc_name) = svc {
+                    if svc_name != "script" && !self.services.contains(&svc_name) {
+                        self.services.push(svc_name.clone());
+                    }
+                }
+                format!("local {} = require({})\n", alias, path)
+            };
 
-        // Try non-relative: resolve from source root (e.g., "shared/utils" → src/shared/utils)
         if !import_path.starts_with('.') {
             if let Some(config) = &self.roblox_config {
-                if let Some(require_path) = resolve_project_import(import_path, &config.mappings) {
-                    return resolve_success(require_path, &mut self.services);
+                if let Some((require_path, service)) =
+                    resolve_project_import(import_path, config, &self.deployments)
+                {
+                    return require_line(require_path, service);
                 }
             }
             if let Some(ref mappings) = self.rojo_mappings {
@@ -166,14 +93,14 @@ impl GenContext {
             }
         }
 
-        // Try wolfram.toml relative resolution
         if let Some(config) = &self.roblox_config {
-            if let Some(require_path) = resolve_import(importing, import_path, &config.mappings) {
-                return resolve_success(require_path, &mut self.services);
+            if let Some((require_path, service)) =
+                resolve_import(importing, import_path, config, &self.deployments)
+            {
+                return require_line(require_path, service);
             }
         }
 
-        // Try Rojo relative resolution
         if let Some(ref mappings) = self.rojo_mappings {
             if let Some((require_path, service)) = RojoPathMapping::resolve_import_to_require(
                 mappings,
@@ -188,15 +115,19 @@ impl GenContext {
             }
         }
 
-        // Fallback
-        let clean = import_path.trim_start_matches("./").trim_start_matches('/');
+        let clean = import_path
+            .trim_start_matches("./")
+            .trim_start_matches('/')
+            .replace("..", "_up_")
+            .replace('/', "_")
+            .replace('\\', "_");
         format!("local {} = require(script.Parent.{})\n", alias, clean)
     }
 }
 
 fn infer_expr_type(expr: &Expr, ctx: &GenContext) -> InferredType {
     match expr {
-        Expr::Array(_) => InferredType::Array,
+        Expr::Array(_) => InferredType::Array(Box::new(InferredType::Unknown)),
         Expr::Table(_) => InferredType::Table,
         Expr::Number(_) => InferredType::Number,
         Expr::Str(_) => InferredType::String,
@@ -214,7 +145,7 @@ fn infer_expr_type(expr: &Expr, ctx: &GenContext) -> InferredType {
         Expr::SelfExpr => InferredType::Unknown,
         Expr::Function { .. } => InferredType::Unknown,
         Expr::AwaitExpr(_) => InferredType::Unknown,
-        Expr::ListComp { .. } => InferredType::Array,
+        Expr::ListComp { .. } => InferredType::Array(Box::new(InferredType::Unknown)),
         Expr::Ternary {
             then_expr,
             else_expr,
@@ -375,7 +306,7 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
             } else {
                 let iter_type = infer_expr_type(iter, ctx);
                 match iter_type {
-                    InferredType::Array => {
+                    InferredType::Array(_) => {
                         s.push_str(&format!(
                             "{}for _, {} in ipairs({}) do\n",
                             ind,
@@ -441,7 +372,7 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
             if ctx.roblox_mode && ctx.roblox_config.is_some() {
                 ctx.resolve_roblox_import(path, alias)
             } else {
-                format!("{}local {} = require({})\n", ind, alias, path)
+                format!("{}local {} = require(\"{}\")\n", ind, alias, path)
             }
         }
         Stmt::Break { .. } => format!("{}break\n", ind),
@@ -524,6 +455,7 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                 roblox_mode: false,
                 roblox_config: None,
                 rojo_mappings: None,
+                deployments: Vec::new(),
                 out_dir: String::new(),
                 importing_file: None,
                 services: Vec::new(),
@@ -850,6 +782,7 @@ fn generate_expr_impl(expr: &Expr, ctx: &GenContext, safe_chain: bool) -> String
                 roblox_mode: ctx.roblox_mode,
                 roblox_config: ctx.roblox_config.clone(),
                 rojo_mappings: ctx.rojo_mappings.clone(),
+                deployments: ctx.deployments.clone(),
                 out_dir: ctx.out_dir.clone(),
                 importing_file: ctx.importing_file.clone(),
                 services: Vec::new(),
@@ -930,6 +863,7 @@ pub fn generate(
     config: Option<&RobloxProjectConfig>,
     importing_file: Option<&str>,
     rojo_mappings: Option<&[RojoPathMapping]>,
+    deployments: &[DeploymentEntry],
     out_dir: &str,
 ) -> String {
     let mut output = String::new();
@@ -941,6 +875,7 @@ pub fn generate(
         roblox_mode,
         roblox_config: config.cloned(),
         rojo_mappings: rojo_mappings.map(|m| m.to_vec()),
+        deployments: deployments.to_vec(),
         out_dir: out_dir.to_string(),
         importing_file: importing_file.map(|s| s.to_string()),
         services: Vec::new(),

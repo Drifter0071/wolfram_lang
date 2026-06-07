@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::analyze::Diagnostic;
 use crate::ast::{Expr, Stmt, TableField};
+use crate::constants::{CLIENT_ONLY_SERVICES, ROBLOX_GLOBALS, SERVER_ONLY_SERVICES};
 use crate::roblox_api::RobloxApi;
 use crate::roblox_context::ScriptType;
 
@@ -28,112 +29,6 @@ impl ValidationResult {
         !self.errors.is_empty()
     }
 }
-
-const SERVER_ONLY_SERVICES: &[&str] = &[
-    "ServerScriptService",
-    "ServerStorage",
-    "DataStoreService",
-    "MessagingService",
-    "PathfindingService",
-];
-
-const CLIENT_ONLY_SERVICES: &[&str] = &[
-    "UserInputService",
-    "GuiService",
-    "HapticService",
-    "ContextActionService",
-    "StarterGui",
-];
-
-const ROBLOX_GLOBALS: &[&str] = &[
-    "game",
-    "workspace",
-    "script",
-    "print",
-    "warn",
-    "error",
-    "Players",
-    "ReplicatedStorage",
-    "ServerScriptService",
-    "ServerStorage",
-    "StarterPlayer",
-    "StarterGui",
-    "StarterPack",
-    "Lighting",
-    "SoundService",
-    "RunService",
-    "UserInputService",
-    "ContextActionService",
-    "TweenService",
-    "CollectionService",
-    "HttpService",
-    "TeleportService",
-    "MarketplaceService",
-    "DataStoreService",
-    "MessagingService",
-    "PathfindingService",
-    "PhysicsService",
-    "Teams",
-    "Chat",
-    "LocalizationService",
-    "SocialService",
-    "GroupService",
-    "PolicyService",
-    "AnalyticsService",
-    "AvatarEditorService",
-    "BadgeService",
-    "MemoryStoreService",
-    "TextService",
-    "GuiService",
-    "HapticService",
-    "Enum",
-    "Vector3",
-    "Vector2",
-    "CFrame",
-    "UDim2",
-    "UDim",
-    "Color3",
-    "BrickColor",
-    "TweenInfo",
-    "RaycastParams",
-    "Region3",
-    "Rect",
-    "NumberRange",
-    "NumberSequence",
-    "ColorSequence",
-    "Ray",
-    "DateTime",
-    "Buffer",
-    "Instance",
-    "PhysicalProperties",
-    "Random",
-    "Axes",
-    "Faces",
-    "math",
-    "string",
-    "table",
-    "os",
-    "task",
-    "coroutine",
-    "debug",
-    "utf8",
-    "bit32",
-    "buffer",
-    "typeof",
-    "ipairs",
-    "pairs",
-    "next",
-    "rawget",
-    "rawset",
-    "setmetatable",
-    "getmetatable",
-    "pcall",
-    "xpcall",
-    "tostring",
-    "tonumber",
-    "type",
-    "require",
-];
 
 fn diagnostic(line: usize, column: usize, message: String, severity: &str) -> Diagnostic {
     Diagnostic {

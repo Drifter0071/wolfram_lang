@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use wolfram::roblox_config::{normalize_deployments, DeploymentEntry};
 use wolfram::roblox_context::ScriptType;
 
 /// If `project_root/src` exists, use it as the source root for output paths.
@@ -15,18 +16,21 @@ pub fn resolve_src_root(project_root: &Path) -> PathBuf {
 pub struct ProjectConfig {
     pub wolfram_toml: Option<wolfram::roblox_config::RobloxProjectConfig>,
     pub rojo_mappings: Option<Vec<wolfram::rojo_config::RojoPathMapping>>,
+    pub deployments: Vec<DeploymentEntry>,
 }
 
 pub fn load_project_config(project_root: &Path) -> ProjectConfig {
     let mut config = ProjectConfig {
         wolfram_toml: None,
         rojo_mappings: None,
+        deployments: Vec::new(),
     };
 
     let toml_path = project_root.join("wolfram.toml");
     if let Ok(raw) = std::fs::read_to_string(&toml_path) {
         if let Ok(full) = toml::from_str::<wolfram::roblox_config::WolframConfig>(&raw) {
             config.wolfram_toml = Some(full.roblox);
+            config.deployments = normalize_deployments(&full.deployment);
         }
     }
 
@@ -86,6 +90,7 @@ pub fn transpile_project(input: &Path, out_root: &Path, verbose: bool) -> (usize
     let project_config = load_project_config(input);
     let wcfg = project_config.wolfram_toml.as_ref();
     let rojo = project_config.rojo_mappings.as_deref();
+    let deps = &project_config.deployments;
     let out_str = out_root.display().to_string();
     let mut ok = 0usize;
     let mut fail = 0usize;
@@ -95,8 +100,8 @@ pub fn transpile_project(input: &Path, out_root: &Path, verbose: bool) -> (usize
         let source_code = std::fs::read_to_string(src).unwrap_or_default();
         let rel = src.strip_prefix(input).unwrap_or(src).display().to_string();
         let script_type = ScriptType::from_filename(&rel);
-        let result = if wcfg.is_some() || rojo.is_some() {
-            wolfram::transpile_roblox(&source_code, &rel, wcfg, &rel, rojo, &out_str)
+        let result = if wcfg.is_some() || rojo.is_some() || !deps.is_empty() {
+            wolfram::transpile_roblox(&source_code, &rel, wcfg, &rel, rojo, deps, &out_str)
         } else {
             wolfram::transpile(&source_code, &rel)
         };
@@ -161,16 +166,15 @@ pub fn transpile_single(
     let cfg = load_project_config(project_root);
     let wcfg = cfg.wolfram_toml.as_ref();
     let rojo = cfg.rojo_mappings.as_deref();
+    let deps = &cfg.deployments;
     let out_str = out_root.display().to_string();
     let rel = input
         .strip_prefix(project_root)
         .unwrap_or(input)
         .display()
         .to_string();
-    if wcfg.is_some() || rojo.is_some() {
-        transpile_file_with_fn(input, &out, &rel, verbose, |src, path| {
-            wolfram::transpile_roblox(src, path, wcfg, path, rojo, &out_str)
-        });
+    if wcfg.is_some() || rojo.is_some() || !deps.is_empty() {
+        transpile_file_with_roblox(input, &out, &rel, verbose, wcfg, rojo, deps, &out_str);
     } else {
         transpile_file_with_fn(input, &out, &rel, verbose, |src, path| {
             wolfram::transpile(src, path)
@@ -192,6 +196,58 @@ where
         }
     };
     match f(&source_code, rel) {
+        Ok(luau) => {
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            match std::fs::write(out_path, &luau) {
+                Ok(_) => {
+                    println!("  ✓  {src_str}  →  {out_str}");
+                    let type_issues = wolfram::check_types(&source_code);
+                    for msg in &type_issues {
+                        println!("      {}", msg);
+                    }
+                    if verbose {
+                        println!("\n--- SOURCE ---\n{source_code}");
+                        println!("--- LUAU ---\n{luau}\n");
+                    }
+                }
+                Err(e) => println!("  ✗  {src_str}  →  Write failed: {e}"),
+            }
+        }
+        Err(e) => {
+            let first_line = e.lines().next().unwrap_or(&e);
+            println!("  ✗  {src_str}  →  {}", first_line);
+            for extra in e.lines().skip(1) {
+                println!("      {}", extra);
+            }
+        }
+    }
+}
+
+fn transpile_file_with_roblox(
+    src_path: &Path,
+    out_path: &Path,
+    rel: &str,
+    verbose: bool,
+    config: Option<&wolfram::roblox_config::RobloxProjectConfig>,
+    rojo_mappings: Option<&[wolfram::rojo_config::RojoPathMapping]>,
+    deployments: &[DeploymentEntry],
+    out_dir: &str,
+) {
+    let src_str = src_path.display().to_string();
+    let out_str = out_path.display().to_string();
+    let source_code = match std::fs::read_to_string(src_path) {
+        Ok(s) => s,
+        Err(e) => {
+            println!("  ✗  {src_str}  →  {e}");
+            return;
+        }
+    };
+    let result = wolfram::transpile_roblox(
+        &source_code, rel, config, rel, rojo_mappings, deployments, out_dir,
+    );
+    match result {
         Ok(luau) => {
             if let Some(parent) = out_path.parent() {
                 std::fs::create_dir_all(parent).ok();
