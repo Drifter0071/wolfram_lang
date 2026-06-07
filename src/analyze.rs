@@ -13,12 +13,14 @@ pub struct AnalyzeResult {
     pub imports: Vec<ImportInfo>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Diagnostic {
     pub line: usize,
     pub column: usize,
     pub message: String,
     pub severity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -219,5 +221,6 @@ fn parse_error_to_diagnostic(error: &str, _source: &str) -> Diagnostic {
         column,
         message: error.to_string(),
         severity: "error".into(),
+        suggestion: None,
     }
 }

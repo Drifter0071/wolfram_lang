@@ -9,6 +9,20 @@ pub struct DocumentStore {
     documents: HashMap<Url, DocumentState>,
 }
 
+#[derive(Debug, Clone)]
+pub struct LineMapEntry {
+    pub wrm_line: usize,
+    pub wrm_col: usize,
+    pub luau_line: usize,
+    pub luau_col: usize,
+}
+
+impl LineMapEntry {
+    pub fn new(wrm_line: usize, wrm_col: usize, luau_line: usize, luau_col: usize) -> Self {
+        Self { wrm_line, wrm_col, luau_line, luau_col }
+    }
+}
+
 pub struct DocumentState {
     pub uri: Url,
     pub source: String,
@@ -17,6 +31,10 @@ pub struct DocumentState {
     pub imports: Vec<crate::analyze::ImportInfo>,
     pub scope: ScopeMap,
     pub dirty: bool,
+    pub cached_luau: Option<String>,
+    pub line_map: Vec<LineMapEntry>,
+    pub last_change_start: Option<usize>,
+    pub last_change_end: Option<usize>,
 }
 
 #[derive(Default)]
@@ -36,8 +54,27 @@ impl DocumentStore {
 
     pub fn update(&mut self, uri: &Url, changes: &str) {
         if let Some(state) = self.documents.get_mut(uri) {
+            let old_len = state.source.len();
             state.source = changes.to_string();
             state.dirty = true;
+            state.last_change_start = Some(0);
+            state.last_change_end = Some(changes.len().max(old_len));
+        }
+    }
+
+    pub fn update_with_range(&mut self, uri: &Url, text: &str, range_start: usize, range_end: usize) {
+        if let Some(state) = self.documents.get_mut(uri) {
+            state.source = text.to_string();
+            state.dirty = true;
+            state.last_change_start = Some(range_start);
+            state.last_change_end = Some(range_end);
+        }
+    }
+
+    pub fn set_cached_luau(&mut self, uri: &Url, luau: String, line_map: Vec<LineMapEntry>) {
+        if let Some(state) = self.documents.get_mut(uri) {
+            state.cached_luau = Some(luau);
+            state.line_map = line_map;
         }
     }
 
@@ -60,6 +97,10 @@ impl DocumentStore {
         self.documents.get(uri)
     }
 
+    pub fn get_mut(&mut self, uri: &Url) -> Option<&mut DocumentState> {
+        self.documents.get_mut(uri)
+    }
+
     pub fn close(&mut self, uri: &Url) {
         self.documents.remove(uri);
     }
@@ -78,9 +119,13 @@ impl DocumentStore {
                 || d.uri.path().ends_with(&format!("/{}", file_name))
         })
     }
+
+    pub fn find_by_uri_str(&self, uri_str: &str) -> Option<&DocumentState> {
+        self.documents.values().find(|d| d.uri.as_str() == uri_str)
+    }
 }
 
-fn parse_document(uri: &Url, source: String) -> DocumentState {
+pub fn parse_document(uri: &Url, source: String) -> DocumentState {
     let mut tokens = Vec::new();
     let mut spans = Vec::new();
     for (res, span) in Token::lexer(&source).spanned() {
@@ -104,6 +149,10 @@ fn parse_document(uri: &Url, source: String) -> DocumentState {
         imports,
         scope,
         dirty: false,
+        cached_luau: None,
+        line_map: Vec::new(),
+        last_change_start: None,
+        last_change_end: None,
     }
 }
 

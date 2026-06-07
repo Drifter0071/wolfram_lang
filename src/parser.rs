@@ -927,3 +927,18 @@ impl<'a> Parser<'a> {
         }
     }
 }
+
+// Incremental parse entry point.
+// For now, does a full reparse. The change_range is tracked for future
+// optimization where only the affected region is re-parsed and stitched.
+pub fn parse_incremental(
+    tokens: Vec<Token>,
+    spans: Vec<usize>,
+    source: &str,
+    _change_start: Option<usize>,
+    _change_end: Option<usize>,
+    _existing_ast: Option<&[Stmt]>,
+) -> Result<Vec<Stmt>, String> {
+    let mut parser = Parser::new(tokens, spans, source);
+    parser.parse_program()
+}

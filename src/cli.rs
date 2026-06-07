@@ -124,7 +124,11 @@ pub fn transpile_project(input: &Path, out_root: &Path, verbose: bool) -> (usize
                 }
             }
             Err(e) => {
-                println!("  ✗  {} — {}", src_str, e);
+                let first_line = e.lines().next().unwrap_or(&e);
+                println!("  ✗  {} — {}", src_str, first_line);
+                for extra in e.lines().skip(1) {
+                    println!("      {}", extra);
+                }
                 fail += 1;
             }
         }
@@ -187,7 +191,13 @@ where F: Fn(&str, &str) -> Result<String, String>
                 Err(e) => println!("  ✗  {src_str}  →  Write failed: {e}"),
             }
         }
-        Err(e) => println!("  ✗  {src_str}  →  {e}"),
+        Err(e) => {
+            let first_line = e.lines().next().unwrap_or(&e);
+            println!("  ✗  {src_str}  →  {}", first_line);
+            for extra in e.lines().skip(1) {
+                println!("      {}", extra);
+            }
+        }
     }
 }
 
