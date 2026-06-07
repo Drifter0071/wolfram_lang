@@ -47,36 +47,7 @@ function activateInternal(context: vscode.ExtensionContext) {
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
 
-  const compilerPath = getCompilerPath();
-  const serverOptions: ServerOptions = {
-    run: {
-      command: compilerPath,
-      args: ["lsp"],
-    } as Executable,
-    debug: {
-      command: compilerPath,
-      args: ["lsp"],
-    } as Executable,
-  };
-
-  const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "wolfram" }],
-    synchronize: {
-      fileEvents: vscode.workspace.createFileSystemWatcher("**/*.wrm"),
-    },
-    outputChannel: outputChannel,
-  };
-
-  client = new LanguageClient(
-    "wolfram",
-    "Wolfram Language Server",
-    serverOptions,
-    clientOptions
-  );
-
-  client.start();
-  context.subscriptions.push(client);
-
+  // Register commands first (so they work even if LSP fails)
   context.subscriptions.push(
     vscode.commands.registerCommand("wolfram.newProject", () =>
       newProject(context)
@@ -94,6 +65,47 @@ function activateInternal(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("wolfram.toggleWatch", () => toggleWatch())
   );
+
+  // Resolve compiler path
+  const compilerPath = resolveCompilerPath();
+  outputChannel.appendLine(`Compiler path: ${compilerPath}`);
+
+  // Start LSP server
+  try {
+    const serverOptions: ServerOptions = {
+      run: {
+        command: compilerPath,
+        args: ["lsp"],
+      } as Executable,
+      debug: {
+        command: compilerPath,
+        args: ["lsp"],
+      } as Executable,
+    };
+
+    const clientOptions: LanguageClientOptions = {
+      documentSelector: [{ scheme: "file", language: "wolfram" }],
+      synchronize: {
+        fileEvents: vscode.workspace.createFileSystemWatcher("**/*.wrm"),
+      },
+      outputChannel: outputChannel,
+    };
+
+    client = new LanguageClient(
+      "wolfram",
+      "Wolfram Language Server",
+      serverOptions,
+      clientOptions
+    );
+
+    context.subscriptions.push(client);
+    client.start().catch((err) => {
+      outputChannel.appendLine(`LSP start error: ${err}`);
+    });
+    outputChannel.appendLine("LSP client started");
+  } catch (err) {
+    outputChannel.appendLine(`LSP setup failed: ${err}`);
+  }
 
   const watchOnOpen = vscode.workspace
     .getConfiguration("wolfram")
@@ -131,6 +143,15 @@ function checkForWolframFiles(dir: string): boolean {
   return false;
 }
 
+function resolveCompilerPath(): string {
+  let cp = getCompilerPath();
+  if (cp === "wolfram") {
+    const cargoBin = path.join(process.env.USERPROFILE || "~", ".cargo", "bin", "wolfram.exe");
+    if (fs.existsSync(cargoBin)) return cargoBin;
+  }
+  return cp;
+}
+
 function startWatch(): void {
   if (watchProcess) return;
 
@@ -141,9 +162,9 @@ function startWatch(): void {
   }
 
   const workspaceRoot = workspaceFolders[0].uri.fsPath;
-  const compilerPath = getCompilerPath();
+  const compilerPath = resolveCompilerPath();
 
-  outputChannel.appendLine(`Starting watch server: ${compilerPath} --watch "${workspaceRoot}"`);
+  outputChannel.appendLine(`Starting watch: ${compilerPath} --watch "${workspaceRoot}"`);
 
   watchProcess = child_process.spawn(compilerPath, [
     "--watch",
@@ -199,7 +220,7 @@ async function compileFile(): Promise<void> {
     return;
   }
 
-  const compilerPath = getCompilerPath();
+  const compilerPath = resolveCompilerPath();
   const filePath = editor.document.uri.fsPath;
   const workspaceRoot =
     vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? ".";
