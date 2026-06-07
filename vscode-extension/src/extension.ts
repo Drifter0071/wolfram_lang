@@ -9,49 +9,69 @@ import {
   Executable,
 } from "vscode-languageclient/node";
 
-let client: LanguageClient;
+let client: LanguageClient | null = null;
 let watchProcess: child_process.ChildProcess | null = null;
 let statusBarItem: vscode.StatusBarItem;
 let outputChannel: vscode.OutputChannel;
+let activeContext: vscode.ExtensionContext | null = null;
+
+enum LspStatus { NO_COMPILER, STARTING, READY, ERROR }
+
+let lspStatus = LspStatus.NO_COMPILER;
 
 function getCompilerPath(): string {
-  const config = vscode.workspace.getConfiguration("wolfram");
-  return config.get<string>("compilerPath", "wolfram");
+  return vscode.workspace.getConfiguration("wolfram").get<string>("compilerPath", "");
 }
 
-function getOutputDir(): string {
-  const config = vscode.workspace.getConfiguration("wolfram");
-  return config.get<string>("outputDir", "out");
-}
-
-export function activate(context: vscode.ExtensionContext) {
-  try {
-    activateInternal(context);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    vscode.window.showErrorMessage(`Wolfram extension failed: ${msg}`);
-    console.error("Wolfram activation error:", err);
+function setStatus(s: LspStatus, detail?: string) {
+  lspStatus = s;
+  switch (s) {
+    case LspStatus.NO_COMPILER:
+      statusBarItem.text = "$(warning) Wolfram: Set Path";
+      statusBarItem.tooltip = "Wolfram compiler not configured. Click to set wolfram.compilerPath.";
+      statusBarItem.command = "wolfram.setCompilerPath";
+      break;
+    case LspStatus.STARTING:
+      statusBarItem.text = "$(sync~spin) Wolfram: Starting...";
+      statusBarItem.tooltip = "Language server starting...";
+      statusBarItem.command = "wolfram.showOutput";
+      break;
+    case LspStatus.READY:
+      statusBarItem.text = "$(check) Wolfram: Ready";
+      statusBarItem.tooltip = "Language server running. Click for output.";
+      statusBarItem.command = "wolfram.showOutput";
+      break;
+    case LspStatus.ERROR:
+      statusBarItem.text = "$(error) Wolfram: Error";
+      statusBarItem.tooltip = `LSP error. ${detail || ""} Click to see output.`;
+      statusBarItem.command = "wolfram.showOutput";
+      break;
   }
 }
 
-function activateInternal(context: vscode.ExtensionContext) {
+export function activate(context: vscode.ExtensionContext) {
+  activeContext = context;
   outputChannel = vscode.window.createOutputChannel("Wolfram");
-  outputChannel.appendLine("Wolfram extension activated");
+  outputChannel.appendLine("=== Wolfram extension activating ===");
 
-  statusBarItem = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Right,
-    100
-  );
-  statusBarItem.command = "wolfram.toggleWatch";
-  statusBarItem.text = "$(circle-outline) Wolfram: Idle";
-  statusBarItem.show();
+  statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   context.subscriptions.push(statusBarItem);
+  setStatus(LspStatus.NO_COMPILER);
+  statusBarItem.show();
 
-  // Register commands first (so they work even if LSP fails)
+  // Register commands
   context.subscriptions.push(
-    vscode.commands.registerCommand("wolfram.newProject", () =>
-      newProject(context)
-    )
+    vscode.commands.registerCommand("wolfram.setCompilerPath", () => {
+      vscode.commands.executeCommand("workbench.action.openSettings", "wolfram.compilerPath");
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("wolfram.showOutput", () => {
+      outputChannel.show();
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("wolfram.newProject", () => newProject())
   );
   context.subscriptions.push(
     vscode.commands.registerCommand("wolfram.startWatch", () => startWatch())
@@ -62,263 +82,207 @@ function activateInternal(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("wolfram.compileFile", () => compileFile())
   );
+
+  outputChannel.appendLine("Commands registered");
+
+  // Start LSP if compiler is configured
+  startLsp();
+
+  // Watch for config changes so user can set path and LSP starts
   context.subscriptions.push(
-    vscode.commands.registerCommand("wolfram.toggleWatch", () => toggleWatch())
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("wolfram.compilerPath")) {
+        outputChannel.appendLine("compilerPath changed, restarting LSP");
+        startLsp();
+      }
+    })
   );
 
-  // Resolve compiler path
-  const compilerPath = resolveCompilerPath();
-  outputChannel.appendLine(`Compiler path: ${compilerPath}`);
-
-  // Start LSP server
-  try {
-    const serverOptions: ServerOptions = {
-      run: {
-        command: compilerPath,
-        args: ["lsp"],
-      } as Executable,
-      debug: {
-        command: compilerPath,
-        args: ["lsp"],
-      } as Executable,
-    };
-
-    const clientOptions: LanguageClientOptions = {
-      documentSelector: [{ scheme: "file", language: "wolfram" }],
-      synchronize: {
-        fileEvents: vscode.workspace.createFileSystemWatcher("**/*.wrm"),
-      },
-      outputChannel: outputChannel,
-    };
-
-    client = new LanguageClient(
-      "wolfram",
-      "Wolfram Language Server",
-      serverOptions,
-      clientOptions
-    );
-
-    context.subscriptions.push(client);
-    client.start().catch((err) => {
-      outputChannel.appendLine(`LSP start error: ${err}`);
-    });
-    outputChannel.appendLine("LSP client started");
-  } catch (err) {
-    outputChannel.appendLine(`LSP setup failed: ${err}`);
-  }
-
-  const watchOnOpen = vscode.workspace
-    .getConfiguration("wolfram")
-    .get<boolean>("watchOnOpen", true);
-
-  if (
-    watchOnOpen &&
-    vscode.workspace.workspaceFolders &&
-    vscode.workspace.workspaceFolders.length > 0
-  ) {
-    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-    const hasWolframFiles = checkForWolframFiles(workspaceRoot);
-    if (hasWolframFiles) {
+  // Auto-watch
+  const watchOnOpen = vscode.workspace.getConfiguration("wolfram").get<boolean>("watchOnOpen", true);
+  if (watchOnOpen && vscode.workspace.workspaceFolders?.length) {
+    const ws = vscode.workspace.workspaceFolders[0].uri.fsPath;
+    if (checkForWolframFiles(ws)) {
       startWatch();
     }
+  }
+
+  outputChannel.appendLine("=== Wolfram extension activated ===");
+}
+
+function startLsp() {
+  if (client) {
+    client.stop();
+    client = null;
+  }
+
+  const cp = getCompilerPath();
+  if (!cp) {
+    outputChannel.appendLine("LSP not started: wolfram.compilerPath is empty. Set it in Settings.");
+    setStatus(LspStatus.NO_COMPILER);
+    return;
+  }
+
+  if (!fs.existsSync(cp)) {
+    outputChannel.appendLine(`LSP not started: compiler not found at "${cp}"`);
+    vscode.window.showErrorMessage(`Wolfram compiler not found at "${cp}". Check wolfram.compilerPath in Settings.`);
+    setStatus(LspStatus.ERROR, "compiler not found");
+    return;
+  }
+
+  setStatus(LspStatus.STARTING);
+  outputChannel.appendLine(`Starting LSP: ${cp} lsp`);
+
+  try {
+    const serverOptions: ServerOptions = {
+      run: { command: cp, args: ["lsp"] } as Executable,
+      debug: { command: cp, args: ["lsp"] } as Executable,
+    };
+    const clientOptions: LanguageClientOptions = {
+      documentSelector: [{ scheme: "file", language: "wolfram" }],
+      synchronize: { fileEvents: vscode.workspace.createFileSystemWatcher("**/*.wrm") },
+      outputChannel,
+    };
+
+    client = new LanguageClient("wolfram", "Wolfram", serverOptions, clientOptions);
+    activeContext?.subscriptions.push(client);
+
+    client.start().then(
+      () => {
+        outputChannel.appendLine("LSP client connected");
+        setStatus(LspStatus.READY);
+      },
+      (err) => {
+        outputChannel.appendLine(`LSP start failed: ${err}`);
+        setStatus(LspStatus.ERROR, String(err));
+      }
+    );
+  } catch (err: any) {
+    outputChannel.appendLine(`LSP create failed: ${err?.message || err}`);
+    setStatus(LspStatus.ERROR, err?.message || String(err));
   }
 }
 
 function checkForWolframFiles(dir: string): boolean {
   try {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name !== "node_modules" && entry.name !== ".git" && entry.name !== "target") {
-          if (checkForWolframFiles(fullPath)) return true;
+        if (entry.name !== "node_modules" && entry.name !== ".git" && entry.name !== "target" && entry.name !== "out") {
+          if (checkForWolframFiles(p)) return true;
         }
       } else if (entry.name.endsWith(".wrm")) {
         return true;
       }
     }
-  } catch {
-    // ignore permission errors
-  }
+  } catch {}
   return false;
-}
-
-function resolveCompilerPath(): string {
-  let cp = getCompilerPath();
-  if (cp === "wolfram") {
-    const cargoBin = path.join(process.env.USERPROFILE || "~", ".cargo", "bin", "wolfram.exe");
-    if (fs.existsSync(cargoBin)) return cargoBin;
-  }
-  return cp;
 }
 
 function startWatch(): void {
   if (watchProcess) return;
+  const ws = vscode.workspace.workspaceFolders;
+  if (!ws?.length) { vscode.window.showWarningMessage("No workspace open."); return; }
 
-  const workspaceFolders = vscode.workspace.workspaceFolders;
-  if (!workspaceFolders || workspaceFolders.length === 0) {
-    vscode.window.showWarningMessage("No workspace folder open.");
+  const cp = getCompilerPath();
+  if (!cp || !fs.existsSync(cp)) {
+    vscode.window.showErrorMessage("Wolfram compiler not found. Set wolfram.compilerPath in Settings.");
+    setStatus(LspStatus.NO_COMPILER);
     return;
   }
 
-  const workspaceRoot = workspaceFolders[0].uri.fsPath;
-  const compilerPath = resolveCompilerPath();
+  const root = ws[0].uri.fsPath;
+  outputChannel.appendLine(`Watch: ${cp} --watch "${root}"`);
 
-  outputChannel.appendLine(`Starting watch: ${compilerPath} --watch "${workspaceRoot}"`);
-
-  watchProcess = child_process.spawn(compilerPath, [
-    "--watch",
-    workspaceRoot,
-  ]);
-
-  watchProcess.stdout?.on("data", (data: Buffer) => {
-    outputChannel.append(data.toString());
-    statusBarItem.text = "$(eye) Wolfram: Watching";
-  });
-
-  watchProcess.stderr?.on("data", (data: Buffer) => {
-    outputChannel.append(data.toString());
-  });
-
-  watchProcess.on("close", (code: number | null) => {
-    outputChannel.appendLine(`Watch server exited with code ${code}`);
-    watchProcess = null;
-    statusBarItem.text = "$(circle-outline) Wolfram: Idle";
-  });
-
-  watchProcess.on("error", (err: Error) => {
-    outputChannel.appendLine(`Watch server error: ${err.message}`);
-    vscode.window.showErrorMessage(
-      `Failed to start Wolfram watch server: ${err.message}`
-    );
+  watchProcess = child_process.spawn(cp, ["--watch", root]);
+  watchProcess.stdout?.on("data", (d: Buffer) => outputChannel.append(d.toString()));
+  watchProcess.stderr?.on("data", (d: Buffer) => outputChannel.append(d.toString()));
+  watchProcess.on("close", (code) => {
+    outputChannel.appendLine(`Watch exited (${code})`);
     watchProcess = null;
   });
-
-  statusBarItem.text = "$(eye) Wolfram: Watching";
+  watchProcess.on("error", (err) => {
+    outputChannel.appendLine(`Watch error: ${err.message}`);
+    vscode.window.showErrorMessage(`Watch failed: ${err.message}`);
+    watchProcess = null;
+  });
+  outputChannel.appendLine("Watch started");
 }
 
 function stopWatch(): void {
-  if (!watchProcess) return;
-  watchProcess.kill();
-  watchProcess = null;
-  statusBarItem.text = "$(circle-outline) Wolfram: Idle";
-  outputChannel.appendLine("Watch server stopped.");
-}
-
-function toggleWatch(): void {
-  if (watchProcess) {
-    stopWatch();
-  } else {
-    startWatch();
-  }
+  if (watchProcess) { watchProcess.kill(); watchProcess = null; outputChannel.appendLine("Watch stopped"); }
 }
 
 async function compileFile(): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== "wolfram") {
-    vscode.window.showWarningMessage("No active Wolfram file to compile.");
+    vscode.window.showWarningMessage("No Wolfram file active.");
     return;
   }
+  const cp = getCompilerPath();
+  if (!cp || !fs.existsSync(cp)) {
+    vscode.window.showErrorMessage("Wolfram compiler not found. Set wolfram.compilerPath in Settings.");
+    return;
+  }
+  const fp = editor.document.uri.fsPath;
+  const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? ".";
+  outputChannel.appendLine(`Compile: ${cp} "${fp}"`);
 
-  const compilerPath = resolveCompilerPath();
-  const filePath = editor.document.uri.fsPath;
-  const workspaceRoot =
-    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? ".";
-
-  outputChannel.appendLine(`Compiling: ${filePath}`);
-
-  child_process.execFile(
-    compilerPath,
-    [filePath],
-    { cwd: workspaceRoot },
-    (error, stdout, stderr) => {
-      if (error) {
-        outputChannel.append(stderr || error.message);
-        vscode.window.showErrorMessage(
-          `Compilation failed: ${stderr || error.message}`
-        );
-        return;
-      }
+  child_process.execFile(cp, [fp], { cwd }, (err, stdout, stderr) => {
+    if (err) {
+      outputChannel.append(stderr || err.message);
+      vscode.window.showErrorMessage(`Compile failed: ${stderr || err.message}`);
+    } else {
       outputChannel.append(stdout);
-      vscode.window.showInformationMessage("File compiled successfully.");
+      vscode.window.showInformationMessage("Compiled successfully.");
     }
-  );
+  });
 }
 
-async function newProject(context: vscode.ExtensionContext): Promise<void> {
+async function newProject(): Promise<void> {
   const folder = await vscode.window.showOpenDialog({
-    canSelectFolders: true,
-    canSelectFiles: false,
+    canSelectFolders: true, canSelectFiles: false,
     openLabel: "Choose folder for new Wolfram project",
   });
+  if (!folder?.length) return;
 
-  if (!folder || folder.length === 0) return;
-
-  const targetDir = folder[0].fsPath;
-
-  const projectName = await vscode.window.showInputBox({
+  const name = await vscode.window.showInputBox({
     prompt: "Project name",
     placeHolder: "my-wolfram-game",
-    value: path.basename(targetDir),
+    value: path.basename(folder[0].fsPath),
   });
+  if (!name) return;
 
-  if (!projectName) return;
-
-  const templateDir = context.asAbsolutePath(
-    path.join("templates", "new-project")
-  );
-
+  const src = activeContext!.asAbsolutePath(path.join("templates", "new-project"));
   try {
-    copyTemplateFiles(templateDir, targetDir, projectName);
-    vscode.window.showInformationMessage(
-      `Wolfram project "${projectName}" created at ${targetDir}`
-    );
-
-    const mainFile = path.join(targetDir, "src", "client", "main.client.wrm");
-    if (fs.existsSync(mainFile)) {
-      const doc = await vscode.workspace.openTextDocument(mainFile);
+    copyDir(src, folder[0].fsPath, name);
+    vscode.window.showInformationMessage(`Created Wolfram project "${name}"`);
+    const main = path.join(folder[0].fsPath, "src", "client", "main.client.wrm");
+    if (fs.existsSync(main)) {
+      const doc = await vscode.workspace.openTextDocument(main);
       await vscode.window.showTextDocument(doc);
     }
-  } catch (err) {
-    vscode.window.showErrorMessage(
-      `Failed to create project: ${err instanceof Error ? err.message : String(err)}`
-    );
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed: ${err.message}`);
   }
 }
 
-function copyTemplateFiles(
-  templateDir: string,
-  targetDir: string,
-  projectName: string
-): void {
-  const entries = fs.readdirSync(templateDir, { withFileTypes: true });
-  for (const entry of entries) {
-    const srcPath = path.join(templateDir, entry.name);
-    const dstPath = path.join(targetDir, entry.name);
-
-    if (entry.isDirectory()) {
-      if (!fs.existsSync(dstPath)) {
-        fs.mkdirSync(dstPath, { recursive: true });
-      }
-      copyTemplateFiles(srcPath, dstPath, projectName);
+function copyDir(src: string, dst: string, projectName: string) {
+  for (const e of fs.readdirSync(src, { withFileTypes: true })) {
+    const sp = path.join(src, e.name);
+    const dp = path.join(dst, e.name);
+    if (e.isDirectory()) {
+      fs.mkdirSync(dp, { recursive: true });
+      copyDir(sp, dp, projectName);
     } else {
-      let content = fs.readFileSync(srcPath, "utf-8");
-      content = content.replace(/\$project_name/g, projectName);
-      const dstDir = path.dirname(dstPath);
-      if (!fs.existsSync(dstDir)) {
-        fs.mkdirSync(dstDir, { recursive: true });
-      }
-      fs.writeFileSync(dstPath, content, "utf-8");
+      let content = fs.readFileSync(sp, "utf-8").replace(/\$project_name/g, projectName);
+      fs.mkdirSync(path.dirname(dp), { recursive: true });
+      fs.writeFileSync(dp, content, "utf-8");
     }
   }
 }
 
 export function deactivate(): void {
   stopWatch();
-  if (client) {
-    client.stop();
-  }
-  if (outputChannel) {
-    outputChannel.dispose();
-  }
+  if (client) { client.stop(); client = null; }
 }

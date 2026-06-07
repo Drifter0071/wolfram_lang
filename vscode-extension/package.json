@@ -46,6 +46,14 @@
     ],
     "commands": [
       {
+        "command": "wolfram.setCompilerPath",
+        "title": "Wolfram: Set Compiler Path"
+      },
+      {
+        "command": "wolfram.showOutput",
+        "title": "Wolfram: Show Output"
+      },
+      {
         "command": "wolfram.newProject",
         "title": "Wolfram: New Project"
       },
@@ -74,8 +82,8 @@
       "properties": {
         "wolfram.compilerPath": {
           "type": "string",
-          "default": "wolfram",
-          "description": "Path to the wolfram compiler binary"
+          "default": "",
+          "description": "Absolute path to the wolfram compiler executable (e.g., C:\\Users\\<name>\\.cargo\\bin\\wolfram.exe)"
         },
         "wolfram.watchOnOpen": {
           "type": "boolean",
