@@ -1,9 +1,11 @@
+#![allow(deprecated)]
 pub mod lexer;
 pub mod ast;
 pub mod parser;
 pub mod generator;
 pub mod roblox_config;
 pub mod analyze;
+pub mod lsp;
 
 use logos::Logos;
 use lexer::Token;

@@ -66,7 +66,7 @@ fn span_to_location(span: &Span, source: &str) -> SourceLocation {
     }
 }
 
-fn extract_symbols(stmts: &[Stmt], source: &str) -> Vec<Symbol> {
+pub fn extract_symbols(stmts: &[Stmt], source: &str) -> Vec<Symbol> {
     let mut symbols = Vec::new();
     for stmt in stmts {
         match stmt {
@@ -154,7 +154,7 @@ fn extract_symbols(stmts: &[Stmt], source: &str) -> Vec<Symbol> {
     symbols
 }
 
-fn extract_imports(stmts: &[Stmt]) -> Vec<ImportInfo> {
+pub fn extract_imports(stmts: &[Stmt]) -> Vec<ImportInfo> {
     stmts
         .iter()
         .filter_map(|stmt| {

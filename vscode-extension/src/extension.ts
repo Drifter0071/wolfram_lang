@@ -6,7 +6,7 @@ import {
   LanguageClient,
   LanguageClientOptions,
   ServerOptions,
-  TransportKind,
+  Executable,
 } from "vscode-languageclient/node";
 
 let client: LanguageClient;
@@ -37,14 +37,16 @@ export function activate(context: vscode.ExtensionContext) {
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
 
-  const serverModule = context.asAbsolutePath(path.join("out", "server.js"));
+  const compilerPath = getCompilerPath();
   const serverOptions: ServerOptions = {
-    run: { module: serverModule, transport: TransportKind.ipc },
+    run: {
+      command: compilerPath,
+      args: ["lsp"],
+    } as Executable,
     debug: {
-      module: serverModule,
-      transport: TransportKind.ipc,
-      options: { execArgv: ["--nolazy", "--inspect=6009"] },
-    },
+      command: compilerPath,
+      args: ["lsp"],
+    } as Executable,
   };
 
   const clientOptions: LanguageClientOptions = {
@@ -63,6 +65,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   client.start();
+  context.subscriptions.push(client);
 
   context.subscriptions.push(
     vscode.commands.registerCommand("wolfram.newProject", () =>
@@ -138,17 +141,8 @@ function startWatch(): void {
   ]);
 
   watchProcess.stdout?.on("data", (data: Buffer) => {
-    const text = data.toString();
-    outputChannel.append(text);
-    if (text.includes("Compile error") || text.includes("Parse error")) {
-      statusBarItem.text = "$(error) Wolfram: Error";
-      statusBarItem.backgroundColor = new vscode.ThemeColor(
-        "statusBarItem.errorBackground"
-      );
-    } else if (text.includes("Done") || text.includes("✓")) {
-      statusBarItem.text = "$(check) Wolfram: OK";
-      statusBarItem.backgroundColor = undefined;
-    }
+    outputChannel.append(data.toString());
+    statusBarItem.text = "$(eye) Wolfram: Watching";
   });
 
   watchProcess.stderr?.on("data", (data: Buffer) => {
@@ -159,7 +153,6 @@ function startWatch(): void {
     outputChannel.appendLine(`Watch server exited with code ${code}`);
     watchProcess = null;
     statusBarItem.text = "$(circle-outline) Wolfram: Idle";
-    statusBarItem.backgroundColor = undefined;
   });
 
   watchProcess.on("error", (err: Error) => {
@@ -168,12 +161,9 @@ function startWatch(): void {
       `Failed to start Wolfram watch server: ${err.message}`
     );
     watchProcess = null;
-    statusBarItem.text = "$(circle-outline) Wolfram: Idle";
-    statusBarItem.backgroundColor = undefined;
   });
 
   statusBarItem.text = "$(eye) Wolfram: Watching";
-  vscode.window.showInformationMessage("Wolfram watch server started.");
 }
 
 function stopWatch(): void {
@@ -181,9 +171,7 @@ function stopWatch(): void {
   watchProcess.kill();
   watchProcess = null;
   statusBarItem.text = "$(circle-outline) Wolfram: Idle";
-  statusBarItem.backgroundColor = undefined;
   outputChannel.appendLine("Watch server stopped.");
-  vscode.window.showInformationMessage("Wolfram watch server stopped.");
 }
 
 function toggleWatch(): void {
@@ -206,14 +194,7 @@ async function compileFile(): Promise<void> {
   const workspaceRoot =
     vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? ".";
 
-  const outputDir = getOutputDir();
-  const relativePath = path.relative(workspaceRoot, filePath);
-  const outPath = path.join(outputDir, relativePath.replace(/\.wrm$/, ".luau"));
-  const fullOutPath = path.isAbsolute(outPath)
-    ? outPath
-    : path.join(workspaceRoot, outPath);
-
-  outputChannel.appendLine(`Compiling: ${filePath} -> ${fullOutPath}`);
+  outputChannel.appendLine(`Compiling: ${filePath}`);
 
   child_process.execFile(
     compilerPath,
@@ -228,10 +209,6 @@ async function compileFile(): Promise<void> {
         return;
       }
       outputChannel.append(stdout);
-      const outDir = path.dirname(fullOutPath);
-      if (!fs.existsSync(outDir)) {
-        fs.mkdirSync(outDir, { recursive: true });
-      }
       vscode.window.showInformationMessage("File compiled successfully.");
     }
   );
