@@ -14,9 +14,7 @@
   },
   "categories": ["Programming Languages"],
   "activationEvents": [
-    "onLanguage:wolfram",
-    "workspaceContains:**/*.wrm",
-    "onStartupFinished"
+    "*"
   ],
   "main": "./out/extension.js",
   "files": [

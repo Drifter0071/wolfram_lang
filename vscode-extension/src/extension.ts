@@ -50,40 +50,26 @@ function setStatus(s: LspStatus, detail?: string) {
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  console.log("WOLFRAM ACTIVATE START");
   activeContext = context;
   outputChannel = vscode.window.createOutputChannel("Wolfram");
   outputChannel.appendLine("=== Wolfram extension activating ===");
+  outputChannel.show();
 
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   context.subscriptions.push(statusBarItem);
-  setStatus(LspStatus.NO_COMPILER);
   statusBarItem.show();
+  setStatus(LspStatus.NO_COMPILER);
 
-  // Register commands
-  context.subscriptions.push(
-    vscode.commands.registerCommand("wolfram.setCompilerPath", () => {
-      vscode.commands.executeCommand("workbench.action.openSettings", "wolfram.compilerPath");
-    })
-  );
-  context.subscriptions.push(
-    vscode.commands.registerCommand("wolfram.showOutput", () => {
-      outputChannel.show();
-    })
-  );
-  context.subscriptions.push(
-    vscode.commands.registerCommand("wolfram.newProject", () => newProject())
-  );
-  context.subscriptions.push(
-    vscode.commands.registerCommand("wolfram.startWatch", () => startWatch())
-  );
-  context.subscriptions.push(
-    vscode.commands.registerCommand("wolfram.stopWatch", () => stopWatch())
-  );
-  context.subscriptions.push(
-    vscode.commands.registerCommand("wolfram.compileFile", () => compileFile())
-  );
-
-  outputChannel.appendLine("Commands registered");
+  console.log("WOLFRAM registering commands");
+  try { context.subscriptions.push(vscode.commands.registerCommand("wolfram.setCompilerPath", () => { vscode.commands.executeCommand("workbench.action.openSettings", "wolfram.compilerPath"); })); } catch(e:any) { console.error(e); outputChannel.appendLine(`setCompilerPath failed: ${e?.message}`); }
+  try { context.subscriptions.push(vscode.commands.registerCommand("wolfram.showOutput", () => { outputChannel.show(); })); } catch(e:any) { console.error(e); outputChannel.appendLine(`showOutput failed: ${e?.message}`); }
+  try { context.subscriptions.push(vscode.commands.registerCommand("wolfram.newProject", () => newProject())); } catch(e:any) { console.error(e); outputChannel.appendLine(`newProject failed: ${e?.message}`); }
+  try { context.subscriptions.push(vscode.commands.registerCommand("wolfram.startWatch", () => startWatch())); } catch(e:any) { console.error(e); outputChannel.appendLine(`startWatch failed: ${e?.message}`); }
+  try { context.subscriptions.push(vscode.commands.registerCommand("wolfram.stopWatch", () => stopWatch())); } catch(e:any) { console.error(e); outputChannel.appendLine(`stopWatch failed: ${e?.message}`); }
+  try { context.subscriptions.push(vscode.commands.registerCommand("wolfram.compileFile", () => compileFile())); } catch(e:any) { console.error(e); outputChannel.appendLine(`compileFile failed: ${e?.message}`); }
+  console.log("WOLFRAM commands registered");
+  outputChannel.appendLine(`Commands registered: ${context.subscriptions.length}`);
 
   // Start LSP if compiler is configured
   startLsp();
