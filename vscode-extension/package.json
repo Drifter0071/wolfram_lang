@@ -84,11 +84,6 @@
           "type": "string",
           "default": "out",
           "description": "Output directory for compiled .luau files"
-        },
-        "wolfram.robloxPort": {
-          "type": "number",
-          "default": 8081,
-          "description": "Default port for Roblox Studio bridge"
         }
       }
     }

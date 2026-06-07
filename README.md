@@ -88,7 +88,6 @@ Then press `F5` in VS Code to launch an Extension Development Host, or run `npx 
 | `wolfram.compilerPath` | `wolfram` | Path to the compiler binary |
 | `wolfram.watchOnOpen` | `true` | Auto-start watch server on `.wol` workspace |
 | `wolfram.outputDir` | `out` | Output directory for compiled `.luau` files |
-| `wolfram.robloxPort` | `8081` | Default Roblox bridge port |
 
 ## Roblox + Rojo Integration
 
@@ -123,10 +122,6 @@ my-game/
 ### wolfram.toml
 
 ```toml
-[roblox]
-enabled = true
-port = 8081
-
 [[roblox.mappings]]
 source = "src/**/*.wol"
 target = "out"

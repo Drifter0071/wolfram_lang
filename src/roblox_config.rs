@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RobloxProjectConfig {
-    pub enabled: bool,
-    #[serde(default = "default_port")]
-    pub port: u16,
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WolframConfig {
     #[serde(default)]
-    pub auto_push: bool,
+    pub roblox: RobloxProjectConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RobloxProjectConfig {
     #[serde(default)]
     pub mappings: Vec<RobloxMapping>,
 }
@@ -15,19 +16,6 @@ pub struct RobloxProjectConfig {
 pub struct RobloxMapping {
     pub source: String,
     pub target: String,
-}
-
-fn default_port() -> u16 { 9876 }
-
-impl Default for RobloxProjectConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            port: 9876,
-            auto_push: false,
-            mappings: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
