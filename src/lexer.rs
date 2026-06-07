@@ -53,6 +53,22 @@ pub enum Token {
     Or,
     #[token("not")]
     Not,
+    #[token("elif")]
+    Elif,
+    #[token("try")]
+    Try,
+    #[token("catch")]
+    Catch,
+    #[token("finally")]
+    Finally,
+    #[token("async")]
+    Async,
+    #[token("await")]
+    Await,
+    #[token("global")]
+    Global,
+    #[token("is")]
+    Is,
 
     // Multi-char operators (must precede single-char equivalents)
     #[token("**")]
@@ -80,6 +96,8 @@ pub enum Token {
     SlashAssign,
     #[token("%=")]
     PercentAssign,
+    #[token("->")]
+    Arrow,
 
     // Single-char operators and punctuation
     #[token("{")]
@@ -106,6 +124,8 @@ pub enum Token {
     Semicolon,
     #[token("?")]
     Question,
+    #[token("@")]
+    At,
     #[token("+")]
     Plus,
     #[token("-")]

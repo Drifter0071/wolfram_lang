@@ -1,0 +1,15 @@
+-- $project_name — Shared (client + server)
+-- Message struct and Logger class
+-- Output: ReplicatedStorage/Shared/Logger
+
+public struct Message {
+    player: string,
+    text: string
+}
+
+public class Logger {
+    public function announce(player_name: string, text: string) {
+        local msg = Message.new(player_name, text)
+        print(f"📢  {msg.player}> {msg.text}")
+    }
+}

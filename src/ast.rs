@@ -16,6 +16,19 @@ impl Span {
 // 2. THE AST
 // ==========================================
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StructField {
+    pub name: String,
+    pub field_type: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CompGenerator {
+    pub var: String,
+    pub iter: Expr,
+    pub condition: Option<Expr>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum TableField {
     Pair { key: Expr, value: Expr },
     Value(Expr),
@@ -69,6 +82,15 @@ pub enum Expr {
         right: Box<Expr>,
     },
     Not(Box<Expr>),
+    Function {
+        params: Vec<String>,
+        block: Vec<Stmt>,
+    },
+    AwaitExpr(Box<Expr>),
+    ListComp {
+        elt: Box<Expr>,
+        generators: Vec<CompGenerator>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -116,8 +138,10 @@ pub enum Stmt {
     FuncDef {
         name: String,
         params: Vec<String>,
+        param_defaults: Vec<Option<Expr>>,
         block: Vec<Stmt>,
         access: String,
+        is_async: bool,
         #[serde(skip)]
         span: Span,
     },
@@ -142,7 +166,7 @@ pub enum Stmt {
     },
     StructDef {
         name: String,
-        fields: Vec<String>,
+        fields: Vec<StructField>,
         access: String,
         #[serde(skip)]
         span: Span,
@@ -158,6 +182,19 @@ pub enum Stmt {
         span: Span,
     },
     Continue {
+        #[serde(skip)]
+        span: Span,
+    },
+    TryCatch {
+        try_block: Vec<Stmt>,
+        catch_clauses: Vec<(Option<String>, Option<String>, Vec<Stmt>)>,
+        finally_block: Option<Vec<Stmt>>,
+        #[serde(skip)]
+        span: Span,
+    },
+    DecoratedStmt {
+        decorators: Vec<String>,
+        stmt: Box<Stmt>,
         #[serde(skip)]
         span: Span,
     },

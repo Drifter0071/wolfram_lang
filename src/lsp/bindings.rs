@@ -127,13 +127,18 @@ impl Bindings {
         }
     }
 
-    pub fn load(dir: &str) -> Self {
+    pub fn load(bindings_path: Option<&str>) -> Self {
         let mut bindings = Self::empty();
-        let builtin_path = Path::new(dir).join("generated").join("roblox.wold");
-        if let Ok(data) = fs::read_to_string(&builtin_path) {
-            if let Ok(wold) = serde_json::from_str::<WoldFile>(&data) {
-                bindings.merge(wold);
+        if let Some(dir) = bindings_path {
+            let p = Path::new(dir).join("generated").join("roblox.wold");
+            if let Ok(data) = fs::read_to_string(&p) {
+                if let Ok(wold) = serde_json::from_str::<WoldFile>(&data) {
+                    bindings.merge(wold);
+                    eprintln!("Loaded bindings from {}", p.display());
+                }
             }
+        } else {
+            eprintln!("LSP: no --bindings path provided, skipping built-in bindings");
         }
         bindings
     }

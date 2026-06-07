@@ -11,6 +11,7 @@ pub fn run_watch(input_dir: &Path, verbose: bool) {
 
     // Initial full transpile
     cli::transpile_project(&input_dir, out_root, verbose);
+    let src_root = cli::resolve_src_root(&input_dir);
 
     let (tx, rx) = mpsc::channel();
 
@@ -62,7 +63,7 @@ pub fn run_watch(input_dir: &Path, verbose: bool) {
                                             println!("  ↻  wolfram.toml changed — full recompile");
                                             cli::transpile_project(&input_dir, out_root, verbose);
                                         } else {
-                                            let out = cli::make_out_path(path, &input_dir, out_root);
+                                            let out = cli::make_out_path(path, &src_root, out_root);
                                             cli::transpile_file(path, &out, verbose);
                                         }
                                     }

@@ -1,4 +1,6 @@
 use std::sync::Mutex;
+use std::fs;
+use std::path::Path;
 use lsp_server::{Connection, Message, Request, Response};
 use lsp_types::*;
 use lsp_types::notification::*;
@@ -9,7 +11,7 @@ use crate::lsp::store::DocumentStore;
 use crate::lsp::bindings::Bindings;
 use crate::lsp::handlers;
 
-pub fn run() -> Result<(), String> {
+pub fn run(bindings_path: Option<&str>) -> Result<(), String> {
     eprintln!("Wolfram LSP starting...");
     let (connection, io_threads) = Connection::stdio();
     let server_capabilities = ServerCapabilities {
@@ -19,6 +21,10 @@ pub fn run() -> Result<(), String> {
             ..Default::default()
         }),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
+        signature_help_provider: Some(SignatureHelpOptions {
+            trigger_characters: Some(vec!["(".into(), ",".into()]),
+            ..Default::default()
+        }),
         definition_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
         ..Default::default()
@@ -42,9 +48,10 @@ pub fn run() -> Result<(), String> {
     let state = Mutex::new(ServerState {
         store: DocumentStore::new(),
         debounce_timer: std::time::Instant::now(),
+        workspace_files: scan_workspace_files("."),
     });
 
-    let mut bindings = Bindings::load(".");
+    let mut bindings = Bindings::load(bindings_path);
     bindings.load_workspace_wolds(".");
 
     eprintln!("Wolfram LSP ready");
@@ -76,6 +83,7 @@ pub fn run() -> Result<(), String> {
 struct ServerState {
     store: DocumentStore,
     debounce_timer: std::time::Instant,
+    workspace_files: Vec<String>,
 }
 
 fn handle_request(
@@ -87,7 +95,8 @@ fn handle_request(
         Completion::METHOD => {
             let params: CompletionParams = serde_json::from_value(req.params.clone()).ok()?;
             let mut s = state.lock().ok()?;
-            let result = handlers::handle_completion(&mut s.store, bindings, params)?;
+            let workspace_files = s.workspace_files.clone();
+            let result = handlers::handle_completion(&mut s.store, bindings, &workspace_files, params)?;
             Some(Response {
                 id: req.id.clone(),
                 result: Some(serde_json::to_value(&result).unwrap()),
@@ -108,6 +117,16 @@ fn handle_request(
             let params: GotoDefinitionParams = serde_json::from_value(req.params.clone()).ok()?;
             let mut s = state.lock().ok()?;
             let result = handlers::handle_definition(&mut s.store, params)?;
+            Some(Response {
+                id: req.id.clone(),
+                result: Some(serde_json::to_value(&result).unwrap()),
+                error: None,
+            })
+        }
+        SignatureHelpRequest::METHOD => {
+            let params: SignatureHelpParams = serde_json::from_value(req.params.clone()).ok()?;
+            let mut s = state.lock().ok()?;
+            let result = handlers::handle_signature_help(&mut s.store, bindings, params)?;
             Some(Response {
                 id: req.id.clone(),
                 result: Some(serde_json::to_value(&result).unwrap()),
@@ -180,4 +199,26 @@ fn publish_diagnostics(connection: &Connection, uri: &lsp_types::Url, diags: Vec
         params: serde_json::to_value(&params).unwrap(),
     };
     let _ = connection.sender.send(Message::Notification(not));
+}
+
+fn scan_workspace_files(root: &str) -> Vec<String> {
+    let mut files = Vec::new();
+    let src_dir = Path::new(root).join("src");
+    let dir = if src_dir.is_dir() { &src_dir } else { Path::new(root) };
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name == ".git" || name == "node_modules" || name == "out" || name == "target" { continue; }
+                    files.extend(scan_workspace_files(&path.display().to_string()));
+                }
+            } else if path.extension().and_then(|e| e.to_str()) == Some("wrm") {
+                if let Ok(rel) = path.strip_prefix(dir) {
+                    files.push(rel.display().to_string().replace('\\', "/").trim_end_matches(".wrm").to_string());
+                }
+            }
+        }
+    }
+    files
 }

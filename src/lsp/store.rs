@@ -63,6 +63,21 @@ impl DocumentStore {
     pub fn close(&mut self, uri: &Url) {
         self.documents.remove(uri);
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &DocumentState> {
+        self.documents.values()
+    }
+
+    pub fn get_all(&self) -> Vec<&DocumentState> {
+        self.documents.values().collect()
+    }
+
+    pub fn find_by_file_name(&self, file_name: &str) -> Option<&DocumentState> {
+        self.documents.values().find(|d| {
+            d.uri.path().ends_with(file_name)
+                || d.uri.path().ends_with(&format!("/{}", file_name))
+        })
+    }
 }
 
 fn parse_document(uri: &Url, source: String) -> DocumentState {

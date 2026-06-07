@@ -50,6 +50,7 @@ pub fn resolve_target_path(
                     rest.to_string()
                 };
                 let name = name.strip_suffix(".wrm").unwrap_or(&name).to_string();
+                let name = name.strip_suffix(".shared").unwrap_or(&name).to_string();
 
                 let mut target_parts: Vec<String> = mapping.target.split('.').map(|s| s.to_string()).collect();
                 let subdir = if let Some(slash) = rest.rfind('/') {
@@ -79,6 +80,7 @@ pub fn resolve_target_path(
                 let target_parts: Vec<String> = mapping.target.split('.').map(|s| s.to_string()).collect();
                 let name = normalized.rsplit('/').next().unwrap_or(&normalized)
                     .strip_suffix(".wrm").unwrap_or(&normalized).to_string();
+                let name = name.strip_suffix(".shared").unwrap_or(&name).to_string();
                 return Some(ResolvedMapping {
                     target_instance: target_parts,
                     target_name: name,
@@ -148,8 +150,34 @@ fn build_require_path(current: &[String], imported: &ResolvedMapping) -> String 
     let escaped_name = imported.target_name.replace('.', "_");
 
     if current == imported.target_instance.as_slice() {
-        format!("require(script.Parent.{})", escaped_name)
+        format!("script.Parent.{}", escaped_name)
     } else {
-        format!("require(game.{}.{})", instance_path, escaped_name)
+        format!("{}.{}", instance_path, escaped_name)
     }
+}
+
+pub fn resolve_project_import(
+    import_path: &str,
+    mappings: &[RobloxMapping],
+) -> Option<String> {
+    let clean = import_path.trim_start_matches("./").trim_start_matches('/');
+    let candidates = vec![
+        format!("src/{}.wrm", clean),
+        format!("src/{}.shared.wrm", clean),
+        format!("src/{}.server.wrm", clean),
+        format!("src/{}.client.wrm", clean),
+    ];
+
+    for cand in &candidates {
+        if let Some(target) = resolve_target_path(cand, mappings) {
+            let instance_path = target.target_instance.join(".");
+            let escaped_name = target.target_name.replace('.', "_");
+            return Some(format!("{}.{}", instance_path, escaped_name));
+        }
+    }
+    None
+}
+
+pub fn extract_service_name(path: &str) -> &str {
+    path.split('.').next().unwrap_or("")
 }

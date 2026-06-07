@@ -1,5 +1,6 @@
 use crate::ast::{TableField, Expr, Stmt};
-use crate::roblox_config::{RobloxProjectConfig, resolve_import};
+use crate::roblox_config::{RobloxProjectConfig, resolve_import, resolve_project_import, extract_service_name};
+use crate::rojo_config::RojoPathMapping;
 use std::collections::HashSet;
 
 // ==========================================
@@ -22,7 +23,10 @@ struct GenContext {
     scopes: Vec<std::collections::HashMap<String, InferredType>>,
     roblox_mode: bool,
     roblox_config: Option<RobloxProjectConfig>,
+    rojo_mappings: Option<Vec<RojoPathMapping>>,
+    out_dir: String,
     importing_file: Option<String>,
+    services: Vec<String>,
 }
 
 const ROBLOX_GLOBALS: &[&str] = &[
@@ -72,13 +76,57 @@ impl GenContext {
         self.roblox_mode && ROBLOX_GLOBALS.contains(&name)
     }
 
-    fn resolve_roblox_import(&self, import_path: &str, alias: &str) -> String {
+    fn resolve_roblox_import(&mut self, import_path: &str, alias: &str) -> String {
         let importing = self.importing_file.as_deref().unwrap_or("");
-        if let Some(config) = &self.roblox_config {
-            if let Some(require_expr) = resolve_import(importing, import_path, &config.mappings) {
-                return format!("local {} = {}\n", alias, require_expr);
+
+        let resolve_success = |require_path: String, services: &mut Vec<String>| -> String {
+            let svc = extract_service_name(&require_path);
+            if svc != "script" && !services.contains(&svc.to_string()) {
+                services.push(svc.to_string());
+            }
+            format!("local {} = require({})\n", alias, require_path)
+        };
+
+        // Try non-relative: resolve from source root (e.g., "shared/utils" → src/shared/utils)
+        if !import_path.starts_with('.') {
+            if let Some(config) = &self.roblox_config {
+                if let Some(require_path) = resolve_project_import(import_path, &config.mappings) {
+                    return resolve_success(require_path, &mut self.services);
+                }
+            }
+            if let Some(ref mappings) = self.rojo_mappings {
+                let src_import = format!("src/{}", import_path.trim_start_matches("./").trim_start_matches('/'));
+                if let Some((require_path, service)) = RojoPathMapping::resolve_import_to_require(
+                    mappings, &src_import, import_path, &self.out_dir,
+                ) {
+                    if service != "script" && !self.services.contains(&service) {
+                        self.services.push(service.clone());
+                    }
+                    return format!("local {} = require({})\n", alias, require_path);
+                }
             }
         }
+
+        // Try wolfram.toml relative resolution
+        if let Some(config) = &self.roblox_config {
+            if let Some(require_path) = resolve_import(importing, import_path, &config.mappings) {
+                return resolve_success(require_path, &mut self.services);
+            }
+        }
+
+        // Try Rojo relative resolution
+        if let Some(ref mappings) = self.rojo_mappings {
+            if let Some((require_path, service)) = RojoPathMapping::resolve_import_to_require(
+                mappings, importing, import_path, &self.out_dir,
+            ) {
+                if service != "script" && !self.services.contains(&service) {
+                    self.services.push(service.clone());
+                }
+                return format!("local {} = require({})\n", alias, require_path);
+            }
+        }
+
+        // Fallback
         let clean = import_path.trim_start_matches("./").trim_start_matches('/');
         format!("local {} = require(script.Parent.{})\n", alias, clean)
     }
@@ -102,6 +150,9 @@ fn infer_expr_type(expr: &Expr, ctx: &GenContext) -> InferredType {
         Expr::Member { .. } => InferredType::Unknown,
         Expr::Index { .. } => InferredType::Unknown,
         Expr::SelfExpr => InferredType::Unknown,
+        Expr::Function { .. } => InferredType::Unknown,
+        Expr::AwaitExpr(_) => InferredType::Unknown,
+        Expr::ListComp { .. } => InferredType::Array,
         Expr::Ternary { then_expr, else_expr, .. } => {
             let t_type = infer_expr_type(then_expr, ctx);
             let e_type = infer_expr_type(else_expr, ctx);
@@ -151,7 +202,7 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
             format!(
                 "{}{}{}{}\n",
                 ind,
-                generate_expr(target, ctx),
+                generate_expr_lvalue(target, ctx),
                 assign_op,
                 generate_expr(value, ctx)
             )
@@ -286,11 +337,18 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
         Stmt::FuncDef {
             name,
             params,
+            param_defaults,
             block,
             ..
         } => {
             ctx.push_scope();
             let mut s = format!("{}local function {}({})\n", ind, name, params.join(", "));
+            for (i, default) in param_defaults.iter().enumerate() {
+                if let Some(default_expr) = default {
+                    let pname = &params[i];
+                    s.push_str(&format!("{}    if {} == nil then {} = {}\n", ind, pname, pname, generate_expr(default_expr, ctx)));
+                }
+            }
             for b in block {
                 s.push_str(&generate_stmt(b, indent + 1, ctx));
             }
@@ -308,6 +366,38 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
         }
         Stmt::Break { .. } => format!("{}break\n", ind),
         Stmt::Continue { .. } => format!("{}continue\n", ind),
+        Stmt::TryCatch { try_block, catch_clauses, finally_block, .. } => {
+            let mut s = String::new();
+            let fn_name = format!("__try_{}", ind.len());
+            s.push_str(&format!("{}local function {}()\n", ind, fn_name));
+            for b in try_block { s.push_str(&generate_stmt(b, indent + 1, ctx)); }
+            s.push_str(&format!("{}end\n", ind));
+            s.push_str(&format!("{}local ok, err = pcall({})\n", ind, fn_name));
+            for (i, (_type_name, var_name, block)) in catch_clauses.iter().enumerate() {
+                let binding = var_name.as_deref().unwrap_or("err");
+                if i == 0 {
+                    s.push_str(&format!("{}if not ok then\n", ind));
+                } else {
+                    s.push_str(&format!("{}elseif not ok then\n", ind));
+                }
+                let bind_line = if var_name.is_some() {
+                    format!("{}    local {} = err\n", ind, binding)
+                } else { String::new() };
+                s.push_str(&bind_line);
+                for b in block { s.push_str(&generate_stmt(b, indent + 1, ctx)); }
+            }
+            if !catch_clauses.is_empty() { s.push_str(&format!("{}end\n", ind)); }
+            if let Some(finally) = finally_block {
+                s.push_str(&format!("{}do\n", ind));
+                for b in finally { s.push_str(&generate_stmt(b, indent + 1, ctx)); }
+                s.push_str(&format!("{}end\n", ind));
+            }
+            s
+        }
+        Stmt::DecoratedStmt { stmt, .. } => {
+            // Generate the inner statement; decorators are metadata comments
+            generate_stmt(stmt, indent, ctx)
+        }
         Stmt::ClassDef { name, body, .. } => {
             let mut private_vars = HashSet::new();
             let mut private_methods = HashSet::new();
@@ -338,7 +428,10 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                 scopes: vec![std::collections::HashMap::new()],
                 roblox_mode: false,
                 roblox_config: None,
+                rojo_mappings: None,
+                out_dir: String::new(),
                 importing_file: None,
+                services: Vec::new(),
             };
 
             let has_init = body.iter().any(|b| {
@@ -458,8 +551,9 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
         }
         Stmt::StructDef { name, fields, .. } => {
             ctx.declare_var(name.clone(), InferredType::Table);
-            let params = fields.join(", ");
-            let field_assignments: Vec<String> = fields
+            let field_names: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+            let params = field_names.join(", ");
+            let field_assignments: Vec<String> = field_names
                 .iter()
                 .map(|f| format!("{} = {}", f, f))
                 .collect();
@@ -479,7 +573,40 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
     }
 }
 
+fn is_simple_chain_root(expr: &Expr) -> bool {
+    matches!(expr, Expr::Ident(_) | Expr::SelfExpr | Expr::Member { .. })
+}
+
+fn generate_safe_member_chain(expr: &Expr, ctx: &GenContext) -> String {
+    fn collect_member_parts(expr: &Expr, ctx: &GenContext) -> (Vec<String>, String) {
+        match expr {
+            Expr::Member { obj, field, is_colon } => {
+                let (mut parts, root) = collect_member_parts(obj, ctx);
+                let sep = if *is_colon { ":" } else { "." };
+                let last = parts.last().unwrap().clone();
+                parts.push(format!("{}{}{}", last, sep, field));
+                (parts, root)
+            }
+            _ => {
+                let root = generate_expr(expr, ctx);
+                (vec![root], String::new())
+            }
+        }
+    }
+
+    let (parts, _) = collect_member_parts(expr, ctx);
+    format!("({})", parts.join(" and "))
+}
+
 fn generate_expr(expr: &Expr, ctx: &GenContext) -> String {
+    generate_expr_impl(expr, ctx, true)
+}
+
+fn generate_expr_lvalue(expr: &Expr, ctx: &GenContext) -> String {
+    generate_expr_impl(expr, ctx, false)
+}
+
+fn generate_expr_impl(expr: &Expr, ctx: &GenContext, safe_chain: bool) -> String {
     match expr {
         Expr::Number(n) => n.to_string(),
         Expr::Str(s) => s.clone(),
@@ -555,18 +682,25 @@ fn generate_expr(expr: &Expr, ctx: &GenContext) -> String {
             field,
             is_colon,
         } => {
+            if field == "length" && !is_colon {
+                let inner = generate_expr_impl(obj, ctx, safe_chain);
+                return format!("#{}", inner);
+            }
             if let Some(class_name) = &ctx.class_name {
                 if ctx.private_vars.contains(field) || ctx.private_methods.contains(field) {
                     return format!(
                         "__private_{}[{}].{}",
                         class_name,
-                        generate_expr(obj, ctx),
+                        generate_expr_impl(obj, ctx, safe_chain),
                         field
                     );
                 }
             }
+            if safe_chain && matches!(&**obj, Expr::Member { .. }) && is_simple_chain_root(obj) {
+                return generate_safe_member_chain(expr, ctx);
+            }
             let sep = if *is_colon { ":" } else { "." };
-            format!("{}{}{}", generate_expr(obj, ctx), sep, field)
+            format!("{}{}{}", generate_expr_impl(obj, ctx, safe_chain), sep, field)
         }
         Expr::Binary { left, op, right } => {
             if op == "==" {
@@ -602,6 +736,59 @@ fn generate_expr(expr: &Expr, ctx: &GenContext) -> String {
         Expr::Not(e) => {
             format!("not {}", generate_expr(e, ctx))
         }
+        Expr::Function { params, block } => {
+            let mut fn_ctx = GenContext {
+                class_name: ctx.class_name.clone(),
+                private_vars: ctx.private_vars.clone(),
+                private_methods: ctx.private_methods.clone(),
+                scopes: ctx.scopes.clone(),
+                roblox_mode: ctx.roblox_mode,
+                roblox_config: ctx.roblox_config.clone(),
+                rojo_mappings: ctx.rojo_mappings.clone(),
+                out_dir: ctx.out_dir.clone(),
+                importing_file: ctx.importing_file.clone(),
+                services: Vec::new(),
+            };
+            fn_ctx.push_scope();
+            let mut s = format!("function({})\n", params.join(", "));
+            for b in block {
+                s.push_str(&generate_stmt(b, 1, &mut fn_ctx));
+            }
+            fn_ctx.pop_scope();
+            s.push_str("end");
+            s
+        }
+        Expr::AwaitExpr(inner) => generate_expr(inner, ctx),
+        Expr::ListComp { elt, generators } => {
+            let mut s = String::from("(function()\n    local _result = {}\n");
+            for gen in generators {
+                let is_range = if let Expr::Call { func, .. } = &gen.iter {
+                    func == "range"
+                } else { false };
+                if is_range {
+                    if let Expr::Call { args, .. } = &gen.iter {
+                        match args.len() {
+                            1 => s.push_str(&format!("    for {} = 0, {} - 1 do\n", gen.var, generate_expr(&args[0], ctx))),
+                            2 => s.push_str(&format!("    for {} = {}, {} - 1 do\n", gen.var, generate_expr(&args[0], ctx), generate_expr(&args[1], ctx))),
+                            3 => s.push_str(&format!("    for {} = {}, {} - 1, {} do\n", gen.var, generate_expr(&args[0], ctx), generate_expr(&args[1], ctx), generate_expr(&args[2], ctx))),
+                            _ => s.push_str("    -- Invalid range\n"),
+                        }
+                    }
+                } else {
+                    s.push_str(&format!("    for _, {} in ipairs({}) do\n", gen.var, generate_expr(&gen.iter, ctx)));
+                }
+                if let Some(ref cond) = gen.condition {
+                    s.push_str(&format!("        if {} then\n", generate_expr(cond, ctx)));
+                    s.push_str(&format!("            table.insert(_result, {})\n", generate_expr(elt, ctx)));
+                    s.push_str("        end\n");
+                } else {
+                    s.push_str(&format!("        table.insert(_result, {})\n", generate_expr(elt, ctx)));
+                }
+                s.push_str("    end\n");
+            }
+            s.push_str("    return _result\nend)()");
+            s
+        }
     }
 }
 
@@ -610,6 +797,8 @@ pub fn generate(
     roblox_mode: bool,
     config: Option<&RobloxProjectConfig>,
     importing_file: Option<&str>,
+    rojo_mappings: Option<&[RojoPathMapping]>,
+    out_dir: &str,
 ) -> String {
     let mut output = String::new();
     let mut global_ctx = GenContext {
@@ -619,19 +808,43 @@ pub fn generate(
         scopes: vec![std::collections::HashMap::new()],
         roblox_mode,
         roblox_config: config.cloned(),
+        rojo_mappings: rojo_mappings.map(|m| m.to_vec()),
+        out_dir: out_dir.to_string(),
         importing_file: importing_file.map(|s| s.to_string()),
+        services: Vec::new(),
     };
 
+    // Generate imports first (to collect services)
     let has_imports = ast.iter().any(|s| matches!(s, Stmt::Import { .. }));
+    let mut import_lines: Vec<String> = Vec::new();
     if has_imports {
         for stmt in ast {
             if let Stmt::Import { .. } = stmt {
-                output.push_str(&generate_stmt(stmt, 0, &mut global_ctx));
+                import_lines.push(generate_stmt(stmt, 0, &mut global_ctx));
+            }
+        }
+    }
+
+    // Prepend service declarations
+    if !global_ctx.services.is_empty() {
+        let mut seen = HashSet::new();
+        for svc in &global_ctx.services {
+            if seen.insert(svc.clone()) {
+                output.push_str(&format!("local {} = game:GetService(\"{}\")\n", svc, svc));
             }
         }
         output.push('\n');
     }
 
+    // Output imports
+    for line in &import_lines {
+        output.push_str(line);
+    }
+    if !import_lines.is_empty() {
+        output.push('\n');
+    }
+
+    // Output body
     for stmt in ast {
         if !matches!(stmt, Stmt::Import { .. }) {
             output.push_str(&generate_stmt(stmt, 0, &mut global_ctx));

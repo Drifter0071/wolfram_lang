@@ -1,20 +1,11 @@
 -- $project_name — Server Script
--- Runs on the server
--- Output: out/server/main.server.luau
+-- Welcomes players using Logger from shared
+-- Output: ServerScriptService/Server/Main
+
+import "../shared/logger.shared" as Log
 
 local Players = game:GetService("Players")
 
-function on_player_added(player) {
-    print(player.Name .. " joined the game!")
-
-    local function on_character_added(character) {
-        local humanoid = character:FindFirstChild("Humanoid")
-        if (humanoid) {
-            print(player.Name .. " spawned as " .. humanoid.DisplayName)
-        }
-    }
-
-    player.CharacterAdded:Connect(on_character_added)
-}
-
-Players.PlayerAdded:Connect(on_player_added)
+Players.PlayerAdded:Connect(function(player) {
+    Log.Logger:announce(player.Name, "joined the server")
+})

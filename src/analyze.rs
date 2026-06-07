@@ -139,13 +139,14 @@ pub fn extract_symbols(stmts: &[Stmt], source: &str) -> Vec<Symbol> {
                 span,
                 ..
             } => {
+                let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
                 symbols.push(Symbol {
                     name: name.clone(),
                     kind: "struct".into(),
                     access: access.clone(),
                     location: span_to_location(span, source),
                     params: vec![],
-                    fields: fields.clone(),
+                    fields: field_names,
                 });
             }
             _ => {}

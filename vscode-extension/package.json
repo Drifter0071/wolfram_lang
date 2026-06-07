@@ -17,14 +17,6 @@
     "*"
   ],
   "main": "./out/extension.js",
-  "files": [
-    "out/**/*",
-    "src/syntaxes/**/*",
-    "templates/**/*",
-    "generated/**/*",
-    "language-configuration.json",
-    "LICENSE"
-  ],
   "contributes": {
     "languages": [
       {

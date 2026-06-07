@@ -11,3 +11,4 @@ toml = "0.8"
 notify = { version = "7", default-features = false, features = ["macos_kqueue"] }
 lsp-server = "0.7"
 lsp-types = { version = "0.95", features = ["proposed"] }
+regex-lite = "0.1"

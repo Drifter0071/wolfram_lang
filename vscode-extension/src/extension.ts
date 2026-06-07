@@ -8,19 +8,48 @@ import {
   ServerOptions,
   Executable,
 } from "vscode-languageclient/node";
+import { loadWoldBindings, createCompletionProvider, createHoverProvider } from "./completions";
 
 let client: LanguageClient | null = null;
 let watchProcess: child_process.ChildProcess | null = null;
 let statusBarItem: vscode.StatusBarItem;
 let outputChannel: vscode.OutputChannel;
 let activeContext: vscode.ExtensionContext | null = null;
+let nativeDisposables: vscode.Disposable[] = [];
+let nativeProvidersActive = false;
+
+function disposeNativeProviders() {
+  for (const d of nativeDisposables) { d.dispose(); }
+  nativeDisposables = [];
+  nativeProvidersActive = false;
+}
+
+function registerNativeProviders(context: vscode.ExtensionContext) {
+  if (nativeProvidersActive) return;
+  try {
+    const wold = loadWoldBindings(context.extensionPath);
+    const provider = createCompletionProvider(wold);
+    nativeDisposables.push(
+      vscode.languages.registerCompletionItemProvider("wolfram", provider)
+    );
+    const hover = createHoverProvider(wold);
+    nativeDisposables.push(
+      vscode.languages.registerHoverProvider("wolfram", hover)
+    );
+    nativeProvidersActive = true;
+    outputChannel.appendLine("Native completion + hover providers registered (LSP fallback)");
+  } catch (e: any) {
+    outputChannel.appendLine(`Native provider setup failed: ${e?.message}`);
+  }
+}
 
 enum LspStatus { NO_COMPILER, STARTING, READY, ERROR }
 
 let lspStatus = LspStatus.NO_COMPILER;
 
 function getCompilerPath(): string {
-  return vscode.workspace.getConfiguration("wolfram").get<string>("compilerPath", "");
+  let p = vscode.workspace.getConfiguration("wolfram").get<string>("compilerPath", "");
+  return p.replace(/^["']|["']$/g, "").trim();
 }
 
 function setStatus(s: LspStatus, detail?: string) {
@@ -71,7 +100,7 @@ export function activate(context: vscode.ExtensionContext) {
   console.log("WOLFRAM commands registered");
   outputChannel.appendLine(`Commands registered: ${context.subscriptions.length}`);
 
-  // Start LSP if compiler is configured
+  // Start LSP if compiler is configured; fall back to native providers
   startLsp();
 
   // Watch for config changes so user can set path and LSP starts
@@ -106,6 +135,7 @@ function startLsp() {
   if (!cp) {
     outputChannel.appendLine("LSP not started: wolfram.compilerPath is empty. Set it in Settings.");
     setStatus(LspStatus.NO_COMPILER);
+    if (activeContext) registerNativeProviders(activeContext);
     return;
   }
 
@@ -113,6 +143,7 @@ function startLsp() {
     outputChannel.appendLine(`LSP not started: compiler not found at "${cp}"`);
     vscode.window.showErrorMessage(`Wolfram compiler not found at "${cp}". Check wolfram.compilerPath in Settings.`);
     setStatus(LspStatus.ERROR, "compiler not found");
+    if (activeContext) registerNativeProviders(activeContext);
     return;
   }
 
@@ -120,9 +151,11 @@ function startLsp() {
   outputChannel.appendLine(`Starting LSP: ${cp} lsp`);
 
   try {
+    const bindingsDir = activeContext?.extensionPath ?? "";
+    const lspArgs = bindingsDir ? ["lsp", "--bindings", bindingsDir] : ["lsp"];
     const serverOptions: ServerOptions = {
-      run: { command: cp, args: ["lsp"] } as Executable,
-      debug: { command: cp, args: ["lsp"] } as Executable,
+      run: { command: cp, args: lspArgs } as Executable,
+      debug: { command: cp, args: lspArgs } as Executable,
     };
     const clientOptions: LanguageClientOptions = {
       documentSelector: [{ scheme: "file", language: "wolfram" }],
@@ -137,10 +170,12 @@ function startLsp() {
       () => {
         outputChannel.appendLine("LSP client connected");
         setStatus(LspStatus.READY);
+        disposeNativeProviders();
       },
       (err) => {
         outputChannel.appendLine(`LSP start failed: ${err}`);
         setStatus(LspStatus.ERROR, String(err));
+        if (activeContext) registerNativeProviders(activeContext);
       }
     );
   } catch (err: any) {
@@ -200,27 +235,28 @@ function stopWatch(): void {
 }
 
 async function compileFile(): Promise<void> {
-  const editor = vscode.window.activeTextEditor;
-  if (!editor || editor.document.languageId !== "wolfram") {
-    vscode.window.showWarningMessage("No Wolfram file active.");
-    return;
-  }
   const cp = getCompilerPath();
   if (!cp || !fs.existsSync(cp)) {
     vscode.window.showErrorMessage("Wolfram compiler not found. Set wolfram.compilerPath in Settings.");
     return;
   }
-  const fp = editor.document.uri.fsPath;
-  const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? ".";
-  outputChannel.appendLine(`Compile: ${cp} "${fp}"`);
 
-  child_process.execFile(cp, [fp], { cwd }, (err, stdout, stderr) => {
+  const ws = vscode.workspace.workspaceFolders?.[0];
+  if (!ws) {
+    vscode.window.showWarningMessage("No workspace open.");
+    return;
+  }
+
+  const root = ws.uri.fsPath;
+  outputChannel.appendLine(`Compile project: ${cp} "${root}"`);
+
+  child_process.execFile(cp, [root], { cwd: root }, (err, stdout, stderr) => {
+    if (stdout) outputChannel.append(stdout);
+    if (stderr) outputChannel.append(stderr);
     if (err) {
-      outputChannel.append(stderr || err.message);
       vscode.window.showErrorMessage(`Compile failed: ${stderr || err.message}`);
     } else {
-      outputChannel.append(stdout);
-      vscode.window.showInformationMessage("Compiled successfully.");
+      vscode.window.showInformationMessage("Project compiled successfully.");
     }
   });
 }

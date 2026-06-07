@@ -11,7 +11,10 @@ fn main() {
     let is_lsp = args.iter().any(|a| a == "lsp");
 
     if is_lsp {
-        if let Err(e) = wolfram::lsp::run() {
+        let bindings_path = args.iter().position(|a| a == "--bindings")
+            .and_then(|i| args.get(i + 1))
+            .map(|s| s.as_str());
+        if let Err(e) = wolfram::lsp::run(bindings_path) {
             eprintln!("LSP error: {}", e);
         }
         return;
@@ -58,7 +61,9 @@ fn main() {
     if input.is_dir() {
         cli::transpile_project(input, out_root, verbose);
     } else if input.is_file() {
-        cli::transpile_single(input, out_root, verbose);
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let src_root = cli::resolve_src_root(&cwd);
+        cli::transpile_single(input, &src_root, out_root, &cwd, verbose);
     } else {
         eprintln!("Error: '{}' is not a file or directory.", input.display());
         cli::print_usage();
