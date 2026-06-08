@@ -77,6 +77,8 @@ pub enum Token {
     // Multi-char operators (must precede single-char equivalents)
     #[token("**")]
     StarStar,
+    #[token("//")]
+    SlashSlash,
     #[token("..")]
     DotDot,
     #[token("==")]
@@ -156,10 +158,7 @@ pub enum Token {
     StringLit(String),
 
     #[regex(r"--[^\n]*", |lex| lex.slice().to_string(), allow_greedy = true)]
-    CommentDash(String),
-
-    #[regex(r"//[^\n]*", |lex| lex.slice().to_string(), allow_greedy = true)]
-    CommentSlash(String),
+    Comment(String),
 
     #[regex(r"[ \t\n\f]+", logos::skip)]
     Whitespace,

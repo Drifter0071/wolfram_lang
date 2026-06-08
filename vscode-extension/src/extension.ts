@@ -130,6 +130,29 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Ctrl+S → single-file transpile (instant feedback without full project rebuild)
+  context.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument((doc) => {
+      if (doc.languageId !== "wolfram") return;
+      const cp = getCompilerPath();
+      if (!cp || !fs.existsSync(cp)) return;
+      const ws = vscode.workspace.workspaceFolders?.[0];
+      if (!ws) return;
+      const root = ws.uri.fsPath;
+      const relPath = path.relative(root, doc.uri.fsPath);
+      if (!relPath || relPath.startsWith("..")) return;
+      const outDir = path.join(root, "out");
+      try { fs.mkdirSync(outDir, { recursive: true }); } catch {}
+      const outFile = path.join(outDir, relPath.replace(/\.\w+\.wrm$|\.wrm$/, ".luau"));
+      const parentDir = path.dirname(outFile);
+      try { fs.mkdirSync(parentDir, { recursive: true }); } catch {}
+      child_process.execFile(cp, [doc.uri.fsPath], { cwd: root }, (err, stdout, stderr) => {
+        if (stdout) outputChannel.append(stdout);
+        if (stderr) outputChannel.append(stderr);
+      });
+    })
+  );
+
   outputChannel.appendLine("=== Wolfram extension activated ===");
 }
 

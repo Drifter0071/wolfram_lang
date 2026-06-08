@@ -75,13 +75,50 @@ pub fn make_out_path(src_path: &Path, src_root: &Path, out_root: &Path) -> PathB
 
 /// Transpile all .wrm files under a directory into out_root.
 /// Returns (ok_count, fail_count).
+/// Delete .luau files in out_dir that don't have a corresponding .wrm in src_dir.
+fn clean_orphaned_luau(src_dir: &Path, out_dir: &Path) -> usize {
+    let mut cleaned = 0usize;
+    let _ = walk_luau_files(out_dir, &mut |luau_path| {
+        let rel = luau_path.strip_prefix(out_dir).unwrap_or(luau_path);
+        let bare_str = rel.with_extension("").display().to_string();
+        let ext_check = |ext: &str| -> bool {
+            let candidate = format!("{}{}", bare_str, ext);
+            src_dir.join(&candidate).exists()
+        };
+        let exists = ext_check(".wrm") || ext_check(".shared.wrm") || ext_check(".server.wrm") || ext_check(".client.wrm");
+        if !exists {
+            if std::fs::remove_file(luau_path).is_ok() {
+                cleaned += 1;
+            }
+        }
+    });
+    cleaned
+}
+
+fn walk_luau_files(dir: &Path, f: &mut dyn FnMut(&Path)) -> std::io::Result<()> {
+    if !dir.exists() { return Ok(()); }
+    for entry in std::fs::read_dir(dir)? {
+        let e = entry?;
+        let path = e.path();
+        if path.is_dir() { walk_luau_files(&path, f)?; }
+        else if path.extension().map_or(false, |ext| ext == "luau") { f(&path); }
+    }
+    Ok(())
+}
+
 pub fn transpile_project(input: &Path, out_root: &Path, verbose: bool) -> (usize, usize) {
     println!("\n🔨  Wolfram Transpiler  ──  project mode");
     println!("    source : {}", input.display());
     println!("    output : {}/\n", out_root.display());
 
+    // Clean orphaned .luau files
+    let cleaned = clean_orphaned_luau(input, out_root);
+
     let files = collect_wolfram_files(input);
     if files.is_empty() {
+        if cleaned > 0 {
+            println!("  Cleaned {} orphaned .luau file(s).", cleaned);
+        }
         println!("  No .wrm files found under '{}'.", input.display());
         return (0, 0);
     }

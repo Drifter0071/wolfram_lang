@@ -89,6 +89,7 @@ impl<'a> Parser<'a> {
                 | Some(Token::Import)
                 | Some(Token::Local)
                 | Some(Token::Public)
+                | Some(Token::Elif)
                 | Some(Token::Private)
                 | Some(Token::Break)
                 | Some(Token::Continue)
@@ -299,32 +300,30 @@ impl<'a> Parser<'a> {
         let mut else_if_blocks = Vec::new();
         let mut else_block = None;
 
-        if self.peek() == Some(&Token::Else) {
-            self.advance();
-            if self.peek() == Some(&Token::If) {
+        // Handle `else if (...) { ... }` or `elif (...) { ... }`
+        loop {
+            if self.peek() == Some(&Token::Else) {
+                self.advance();
+                if self.peek() == Some(&Token::If) {
+                    self.advance();
+                    self.expect(Token::LParen)?;
+                    let ei_cond = self.parse_expr()?;
+                    self.expect(Token::RParen)?;
+                    let ei_block = self.parse_block()?;
+                    else_if_blocks.push((ei_cond, ei_block));
+                } else {
+                    else_block = Some(self.parse_block()?);
+                    break;
+                }
+            } else if self.peek() == Some(&Token::Elif) {
                 self.advance();
                 self.expect(Token::LParen)?;
                 let ei_cond = self.parse_expr()?;
                 self.expect(Token::RParen)?;
                 let ei_block = self.parse_block()?;
                 else_if_blocks.push((ei_cond, ei_block));
-
-                while self.peek() == Some(&Token::Else) {
-                    self.advance();
-                    if self.peek() == Some(&Token::If) {
-                        self.advance();
-                        self.expect(Token::LParen)?;
-                        let ei_cond = self.parse_expr()?;
-                        self.expect(Token::RParen)?;
-                        let ei_block = self.parse_block()?;
-                        else_if_blocks.push((ei_cond, ei_block));
-                    } else {
-                        else_block = Some(self.parse_block()?);
-                        break;
-                    }
-                }
             } else {
-                else_block = Some(self.parse_block()?);
+                break;
             }
         }
 
@@ -820,12 +819,14 @@ impl<'a> Parser<'a> {
         loop {
             match self.peek() {
                 Some(Token::StarStar)
+                | Some(Token::SlashSlash)
                 | Some(Token::Caret)
                 | Some(Token::Star)
                 | Some(Token::Slash)
                 | Some(Token::Percent) => {
                     let op = match self.advance().unwrap() {
                         Token::StarStar => "^",
+                        Token::SlashSlash => "//",
                         Token::Caret => "^",
                         Token::Star => "*",
                         Token::Slash => "/",

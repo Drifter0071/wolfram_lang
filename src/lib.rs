@@ -35,7 +35,7 @@ pub fn tokenize_and_parse(source_code: &str) -> Result<Vec<Stmt>, String> {
     let mut spans = Vec::new();
     for (res, span) in Token::lexer(source_code).spanned() {
         if let Ok(tok) = res {
-            if matches!(tok, Token::CommentDash(_) | Token::CommentSlash(_)) {
+            if matches!(tok, Token::Comment(_)) {
                 continue;
             }
             tokens.push(tok);
@@ -183,6 +183,9 @@ fn transpile_inner(
         output.insert_str(0, &warn_block);
     }
 
+    // Post-generation: run native Luau type checker on generated output
+    check_generated_luau(&mut output, file_path);
+
     Ok(output)
 }
 
@@ -285,4 +288,146 @@ pub fn transpile_with_cache(
         line_map,
         warnings: validation.warnings,
     }
+}
+
+/// Run Luau type check on generated output and prepend diagnostics as comments.
+#[cfg(feature = "luau-check")]
+fn check_generated_luau(output: &mut String, file_path: &str) {
+    use luau_analyze::Checker;
+    let checker = match Checker::new() {
+        Ok(mut c) => {
+            // Provide Roblox API definitions for the checker
+            let defs = r#"
+                declare game: { GetService: (self, string) -> any, Debris: any, Players: any }
+                declare workspace: any
+                declare script: any
+                declare print: (...any) -> ()
+                declare warn: (...any) -> ()
+                declare error: (string) -> never
+                declare tick: () -> number
+                declare os: { clock: () -> number, time: () -> number }
+                declare math: { random: () -> number, pi: number, cos: (number) -> number, sin: (number) -> number }
+                declare Instance: { new: (string, any?) -> any }
+                declare task: { spawn: (any, ...any) -> (), wait: (number?) -> number }
+                declare require: (any) -> any
+                declare pcall: (any, ...any) -> (boolean, ...any)
+                declare Vector3: { new: (number, number, number) -> any }
+                declare Color3: { fromRGB: (number, number, number) -> any, new: (number, number, number) -> any }
+                declare TweenInfo: { new: (number, any, any) -> any }
+                declare table: { freeze: <T>(T) -> T, insert: (any, any?) -> () }
+                declare string: any
+                declare Enum: any
+                declare UDim2: { new: (number, number, number, number) -> any }
+                declare BrickColor: { new: (string) -> any }
+                declare RaycastParams: { new: () -> any }
+                declare RaycastFilterType: any
+                declare typeof: (any) -> string
+            "#;
+            let _ = c.add_definitions(defs);
+            c
+        }
+        Err(_) => return,
+    };
+
+    // Strip our comment-only header lines for cleaner checking
+    let clean = output
+        .lines()
+        .filter(|l| !l.starts_with("-- Luau Checker:") && !l.starts_with("--   line"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    match checker.check(&clean) {
+        Ok(result) => {
+            if !result.is_ok() {
+                let mut issues = Vec::new();
+                for diag in result.diagnostics() {
+                    issues.push(format!(
+                        "-- Luau Type: line {}:{} — {} ({})\n",
+                        diag.line(),
+                        diag.column(),
+                        diag.message(),
+                        match diag.severity() {
+                            luau_analyze::Severity::Error => "error",
+                            luau_analyze::Severity::Warning => "warning",
+                            _ => "info",
+                        }
+                    ));
+                }
+                if !issues.is_empty() {
+                    let header = format!(
+                        "-- Luau Type Checker: {} issue(s) in '{}'\n",
+                        issues.len(),
+                        file_path
+                    );
+                    output.insert_str(0, &format!("{}{}", header, issues.concat()));
+                }
+            }
+        }
+        Err(e) => {
+            output.insert_str(0, &format!("-- Luau Type Checker: failed — {}\n", e));
+        }
+    }
+}
+
+/// Fallback: lightweight Luau syntax check (always runs).
+/// Checks: module return value, basic syntax structure.
+#[cfg(not(feature = "luau-check"))]
+fn check_generated_luau(output: &mut String, file_path: &str) {
+    let issues = luau_syntax_check(output, file_path);
+    if !issues.is_empty() {
+        let header = format!(
+            "-- Luau Syntax Check: {} issue(s)\n",
+            issues.len()
+        );
+        output.insert_str(0, &format!("{}{}", header, issues.concat()));
+    }
+}
+
+#[cfg(not(feature = "luau-check"))]
+fn luau_syntax_check(luau: &str, _file_path: &str) -> Vec<String> {
+    let mut issues = Vec::new();
+
+    // Check: ModuleScript must return exactly 1 value
+    if luau.contains("return module") || luau.lines().any(|l| l.trim() == "return module") {
+        // OK — module wrapper present
+    } else if luau.contains("return ") {
+        // Has some return, check it's not multi-value
+        let ret_line = luau.lines().filter(|l| l.trim().starts_with("return ")).next();
+        if let Some(line) = ret_line {
+            let trimmed = line.trim().strip_prefix("return ").unwrap_or(line);
+            if trimmed.contains(",") {
+                issues.push(format!(
+                    "--   line 0:0 — Module returns multiple values — wrap in {{}} or use 'return module'\n"
+                ));
+            }
+        }
+    }
+
+    // Check: No stray slashes (// is not a Luau operator, it would be division-by-division)
+    for (i, line) in luau.lines().enumerate() {
+        if line.contains(" // ") {
+            issues.push(format!(
+                "--   line {}:0 — Suspicious '//' operator (two divisions); consider -- for comments\n",
+                i + 1
+            ));
+        }
+    }
+
+    // Check: ensure output ends with a return or is a script (no return needed for scripts)
+    let last_non_empty = luau.lines().filter(|l| !l.trim().is_empty()).last();
+    if let Some(last) = last_non_empty {
+        if !last.trim().starts_with("return ") && !last.trim().starts_with("end") && !last.trim().starts_with(")")
+            && !last.trim().starts_with("--")
+        {
+            // Check if it's a script (local definitions, no module)
+            let has_return = luau.lines().any(|l| l.trim().starts_with("return "));
+            if !has_return && luau.lines().filter(|l| l.contains("require")).count() > 0 {
+                issues.push(format!(
+                    "--   line 0:0 — Module with require() imports should end with 'return module'\n"
+                ));
+            }
+        }
+    }
+
+    issues
 }

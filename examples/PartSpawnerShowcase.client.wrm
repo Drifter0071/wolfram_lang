@@ -1,0 +1,193 @@
+import "../shared/config" as Config
+
+-- 1. ENUMS
+private enum SpawnMode { Single, Grid, Circle, Random }
+private enum PartShape  { Ball, Block, Cylinder }
+
+-- 2. STRUCTS
+private struct SpawnConfig {
+    mode: SpawnMode,
+    shape: PartShape,
+    count: number,
+    radius: number,
+    cooldown: number
+}
+
+private struct ColorPalette {
+    name: string,
+    primary: Color3,
+    secondary: Color3,
+    accent: Color3
+}
+
+-- 4. TOP-LEVEL SETUP
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local mouse = player:GetMouse()
+local startTime = os.clock()
+
+-- 3. CLASSES
+private class PartSpawner {
+    private local spawnedCount = 0
+    private local lastClickTime = 0.0
+    private local palette = ColorPalette.new("Default",
+        Color3.fromRGB(255, 100, 50),
+        Color3.fromRGB(50, 150, 255),
+        Color3.fromRGB(100, 255, 100)
+    )
+
+    private function init(config) {
+        spawnedCount = 0
+        self.config = config
+    }
+
+    private function randomInRange(min, max) {
+        return min + math.random() * (max - min)
+    }
+
+    private function getStatus() {
+        local active = self.getActiveParts()
+        local msg = f"Parts: {active.length}/{spawnedCount}"
+        return msg
+    }
+
+    private function getActiveParts() {
+        return [p for p in workspace:GetChildren()
+                if (p:IsA("Part") and p:GetAttribute("SpawnerId") == self.id)]
+    }
+
+    private function randomColor() {
+        local colors = [
+            Color3.fromRGB(255, 80, 80),
+            Color3.fromRGB(80, 255, 80),
+            Color3.fromRGB(80, 80, 255),
+            Color3.fromRGB(255, 255, 80),
+            Color3.fromRGB(255, 80, 255),
+        ]
+        return palette.primary
+    }
+
+    private function spawnAt(position, color) {
+        local part = Instance.new("Part", workspace)
+        part.Position = position
+        part.Size = Vector3.new(2, 2, 2)
+        part.Color = color or self.randomColor()
+        part.Anchored = true
+        part:SetAttribute("SpawnerId", self.id)
+        spawnedCount = spawnedCount + 1
+        return part
+    }
+
+    private function spawnCircle(center, count) {
+        for i in range(0, count) {
+            local angle = (math.pi * 2) * (i / count)
+            local offset = Vector3.new(
+                math.cos(angle) * self.config.radius,
+                0,
+                math.sin(angle) * self.config.radius
+            )
+            local pos = center + offset
+            local col = self.randomColor()
+            local part = self.spawnAt(pos, col)
+
+            task.spawn(function() {
+                local tweenInfo = TweenInfo.new(0.5,
+                    Enum.EasingStyle.Back,
+                    Enum.EasingDirection.Out
+                )
+                part.Transparency = 1.0
+                local tween = TweenService:Create(part, tweenInfo,
+                    {Transparency = 0.0}
+                )
+                tween:Play()
+                tween.Completed:Wait()
+            })
+        }
+        self.notify(f"Spawned {count} parts in circle")
+    }
+
+    private function spawnGrid(origin, cols, rows) {
+        for r in range(0, rows) {
+            for c in range(0, cols) {
+                local pos = origin + Vector3.new(c * 3, 0, r * 3)
+                local part = self.spawnAt(pos, nil)
+                game.Debris:AddItem(part, 15)
+            }
+        }
+    }
+
+    private function notify(msg) {
+        print(f"[PartSpawner] {msg}")
+        if (player.PlayerGui) {
+            local sorted = self.getActiveParts()
+            print(f"Total active: {sorted.length}")
+        }
+    }
+}
+local spawner = PartSpawner.new(SpawnConfig.new(SpawnMode.Circle, PartShape.Ball, 12, 8, 0.1))
+
+-- 5. INPUT HANDLING
+
+local clickCount = 0
+
+local onMouseClick = function() {
+    if (spawner == nil or not mouse) { return }
+
+    local now = tick()
+    if (now - startTime < 0.05) { return }
+
+    clickCount = clickCount + 1
+    local mode = "Single"
+    if (clickCount % 3 == 0) { mode = "Circle" }
+    elif (clickCount % 3 == 1) { mode = "Grid" }
+
+    local position = mouse.Hit.Position
+
+    if (mode == "Circle") {
+        spawner:spawnCircle(position, 8)
+    } elif (mode == "Grid") {
+        spawner:spawnGrid(position, 3, 3)
+    } else {
+        local part = spawner:spawnAt(position, nil)
+        game.Debris:AddItem(part, 10)
+    }
+}
+
+UserInputService.InputBegan:Connect(function(input, processed) {
+    if (processed) { return }
+    if (input.UserInputType == Enum.UserInputType.MouseButton1) {
+        onMouseClick()
+    }
+})
+
+-- 6. KEYBOARD SHORTCUTS
+
+UserInputService.InputBegan:Connect(function(input, processed) {
+    if (processed) { return }
+
+    if (input.KeyCode == Enum.KeyCode.R) {
+        if (spawner and spawner.config) {
+            print(spawner:getStatus())
+        }
+    }
+
+    if (input.KeyCode == Enum.KeyCode.C) {
+        local count = 0
+        for part in workspace:GetChildren() {
+            if (part:IsA("Part") and part:GetAttribute("SpawnerId")) {
+                part:Destroy()
+                count = count + 1
+                break
+            }
+        }
+        print(f"Cleaned {count} part(s)")
+    }
+})
+
+-- 7. STARTUP
+
+print("Part Spawner v1.0 -- Modes: Single / Grid / Circle -- Keys: R=status C=clear")
+print(f"Loaded in {(os.clock() - startTime) * 1000}ms")

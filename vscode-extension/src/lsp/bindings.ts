@@ -13,7 +13,7 @@ export interface WoldFile { version: number; globals: WoldGlobal[]; functions: W
 export class Bindings {
     globals = new Map<string, WoldGlobal>();
     functions = new Map<string, WoldFunction>();
-    private types = new Map<string, WoldType>();
+    types = new Map<string, WoldType>();
     enums = new Map<string, WoldEnum>();
 
     load(bindingsDir: string): void {
