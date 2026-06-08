@@ -293,7 +293,7 @@ class PlayerData {
     }
 }
 
-let data = PlayerData.new("Player1", 100)
+local data = PlayerData.new("Player1", 100)
 data:addScore(50)
 ```
 
@@ -304,7 +304,7 @@ struct Vec3 {
     x: number, y: number, z: number
 }
 
-let pos = Vec3.new(1, 2, 3)
+local pos = Vec3.new(1, 2, 3)
 print(pos.x)
 ```
 
@@ -317,7 +317,7 @@ enum GameState {
     Ended
 }
 
-let state = GameState.Lobby
+local state = GameState.Lobby
 ```
 
 ### Control Flow
@@ -355,8 +355,8 @@ import "./MathUtils" as MathUtils        // same directory
 ### Ternary & F-Strings
 
 ```js
-let status = score > 50 ? "Pass" : "Fail"
-let msg = f"Player {name} has {score} points"
+local status = score > 50 ? "Pass" : "Fail"
+local msg = f"Player {name} has {score} points"
 ```
 
 ### Error Handling
@@ -412,7 +412,7 @@ node vscode-extension/generator/generate.js
 Source (.wrm)
   → Tokenizer (logos) → 40+ token types
   → Parser (recursive descent) → AST with source spans
-  → Validation (4-phase Luau Checker)
+  → Validation (scope + luau-check)
   → Generator → Luau output (.luau)
 ```
 
@@ -420,26 +420,19 @@ Source (.wrm)
 
 ```
 src/
-├── main.rs                  CLI entry point
-├── lib.rs                   Library API (transpile, analyze)
+├── main.rs                  CLI entry point (single file, project, watch, analyze)
+├── lib.rs                   Library API (transpile, generate, validation, luau_check)
 ├── lexer.rs                 Tokenizer (logos-based)
 ├── parser.rs                Recursive descent parser
 ├── ast.rs                   AST node definitions with source spans
 ├── generator.rs             AST → Luau code emitter
 ├── roblox_config.rs         wolfram.toml parser + deployment resolver
 ├── roblox_context.rs        Script type detection (client/server/shared)
-├── roblox_api.rs            Roblox API service definitions
 ├── rojo_config.rs           Rojo default.project.json parser
 ├── constants.rs             Shared globals, service lists, path utils
-├── types.rs                 Unified InferredType enum
 ├── errors.rs                TranspilerError hierarchy
-├── typeck.rs                Type checker
-├── scope.rs                 Scope analysis
 ├── analyze.rs               JSON diagnostics extractor
-├── luau_checker.rs          Luau validation engine
-├── cli.rs                   CLI helpers (project transpile, file collection)
-├── watch.rs                 File watcher (notify-based)
-├── tests.rs                 Unit tests (18 tests)
+└── tests.rs                 Unit + integration tests (120 tests)
 ```
 
 ---

@@ -74,8 +74,8 @@ function tokenize(source: string): Token[] {
         if (c === " " || c === "\t" || c === "\r" || c === "\f") { i++; continue; }
         if (c === "\n") { i++; continue; }
 
-        // Comments (-- or //)
-        if ((c === "/" && source[i + 1] === "/") || (c === "-" && source[i + 1] === "-")) {
+        // Comments (-- only)
+        if (c === "-" && source[i + 1] === "-") {
             const start = i;
             while (i < len && source[i] !== "\n") i++;
             tokens.push({ type: "COMMENT", value: source.substring(start, i), span: { start, end: i } });
@@ -167,7 +167,7 @@ function tokenize(source: string): Token[] {
 function isStmtStart(t: Token): boolean {
     return ["IF", "WHILE", "FOR", "RETURN", "FUNCTION", "CLASS", "ENUM", "STRUCT",
         "IMPORT", "LOCAL", "PUBLIC", "PRIVATE", "BREAK", "CONTINUE", "TRY",
-        "ASYNC", "IDENT", "TRUE", "FALSE", "NIL", "SELF", "NOT", "MINUS",
+        "ASYNC", "ELIF", "ELSE", "IDENT", "TRUE", "FALSE", "NIL", "SELF", "NOT", "MINUS",
         "LPAREN", "LBRACKET", "LBRACE", "NUMBER", "STRINGLIT", "FSTRING", "COMMENT",
         "AT", "AWAIT"].includes(t.type);
 }
@@ -356,32 +356,31 @@ class Parser {
         const elseIfBlocks: [Expr, Stmt[]][] = [];
         let elseBlock: Stmt[] | null = null;
 
-        if (this.peek()?.type === "ELSE") {
-            this.advance();
-            if (this.peek()?.type === "IF") {
+        // Handle `else if (...) { ... }` or `elif (...) { ... }`
+        while (true) {
+            const t = this.peek();
+            if (t?.type === "ELSE") {
+                this.advance();
+                if (this.peek()?.type === "IF") {
+                    this.advance();
+                    this.expect("LPAREN");
+                    const eiCond = this.parseExpr();
+                    this.expect("RPAREN");
+                    const eiBlock = this.parseBlock();
+                    elseIfBlocks.push([eiCond, eiBlock]);
+                } else {
+                    elseBlock = this.parseBlock();
+                    break;
+                }
+            } else if (t?.type === "ELIF") {
                 this.advance();
                 this.expect("LPAREN");
                 const eiCond = this.parseExpr();
                 this.expect("RPAREN");
                 const eiBlock = this.parseBlock();
                 elseIfBlocks.push([eiCond, eiBlock]);
-
-                while (this.peek()?.type === "ELSE") {
-                    this.advance();
-                    if (this.peek()?.type === "IF") {
-                        this.advance();
-                        this.expect("LPAREN");
-                        const eiCond2 = this.parseExpr();
-                        this.expect("RPAREN");
-                        const eiBlock2 = this.parseBlock();
-                        elseIfBlocks.push([eiCond2, eiBlock2]);
-                    } else {
-                        elseBlock = this.parseBlock();
-                        break;
-                    }
-                }
             } else {
-                elseBlock = this.parseBlock();
+                break;
             }
         }
         return { kind: "If", cond, thenBlock, elseIfBlocks, elseBlock, span: this.currentSpan() };
@@ -804,6 +803,7 @@ class Parser {
                                     const e = this.parseExpr();
                                     body = [{ kind: "Return", value: e, span: this.currentSpan() }];
                                 }
+                                for (const p of params) this.scope.set(p, "any");
                                 return { kind: "Function", params, block: body };
                             }
                         }
@@ -824,6 +824,7 @@ class Parser {
                     if (this.peek()?.value === "for") {
                         this.advance(); // for
                         const varTok = this.expect("IDENT");
+                        this.scope.set(varTok.value, "any");
                         this.expect("IN"); // "in" keyword
                         const iter = this.parseExpr();
                         const generators: CompGenerator[] = [];
@@ -857,6 +858,7 @@ class Parser {
                 this.parseParamList(params, paramTypes, defaults);
                 this.expect("RPAREN");
                 const block = this.parseBlock();
+                for (const p of params) this.scope.set(p, "any");
                 return { kind: "Function", params, block };
             }
 

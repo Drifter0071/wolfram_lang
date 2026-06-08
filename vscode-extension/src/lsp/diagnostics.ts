@@ -1,5 +1,6 @@
 import { Diagnostic, DiagnosticSeverity } from "vscode-languageserver/node";
 import { parseSource } from "./parser";
+import { Stmt } from "./ast";
 
 const DECL_KEYWORD_RE = /\b(local|function|class|struct|enum|import|as|for)\s*$/;
 
@@ -31,69 +32,192 @@ export function computeDiagnostics(source: string): Diagnostic[] {
         }
     }
 
-    // Scope analysis — only when parser had errors, otherwise parsed scope is trusted
-    if (result.errors.length > 0) {
-        collectUndefinedVars(source, result.scope, diags);
-    }
+    // Scope analysis — AST-driven (replaces regex-based scan)
+    collectUndefinedVars(source, result.scope, result.ast, diags);
 
     return diags;
 }
 
-function collectUndefinedVars(source: string, scope: Map<string, string>, diags: Diagnostic[]): void {
+function collectUndefinedVars(
+    source: string,
+    scope: Map<string, string>,
+    ast: Stmt[],
+    diags: Diagnostic[]
+): void {
     const definedVars = new Set<string>();
-    definedVars.add("true"); definedVars.add("false"); definedVars.add("nil"); definedVars.add("self");
-    definedVars.add("game"); definedVars.add("workspace"); definedVars.add("script");
-    definedVars.add("Enum"); definedVars.add("task");
-    definedVars.add("print"); definedVars.add("warn"); definedVars.add("error");
-    definedVars.add("math"); definedVars.add("string"); definedVars.add("table"); definedVars.add("os");
-    definedVars.add("require"); definedVars.add("pcall"); definedVars.add("xpcall");
-    definedVars.add("type"); definedVars.add("typeof"); definedVars.add("tostring"); definedVars.add("tonumber");
-    definedVars.add("setmetatable"); definedVars.add("getmetatable"); definedVars.add("rawget"); definedVars.add("rawset");
-    definedVars.add("unpack"); definedVars.add("next"); definedVars.add("ipairs"); definedVars.add("pairs");
-    definedVars.add("tick"); definedVars.add("time"); definedVars.add("wait"); definedVars.add("spawn"); definedVars.add("delay");
-    definedVars.add("Instance"); definedVars.add("Vector3"); definedVars.add("Vector2"); definedVars.add("CFrame");
-    definedVars.add("Color3"); definedVars.add("BrickColor"); definedVars.add("UDim2"); definedVars.add("UDim");
-    definedVars.add("Ray"); definedVars.add("TweenInfo"); definedVars.add("Region3"); definedVars.add("DateTime");
-    definedVars.add("Players"); definedVars.add("ReplicatedStorage"); definedVars.add("ServerStorage");
-    definedVars.add("ServerScriptService"); definedVars.add("StarterPlayer"); definedVars.add("Workspace");
-    definedVars.add("Lighting"); definedVars.add("SoundService"); definedVars.add("UserInputService");
-    definedVars.add("RunService"); definedVars.add("ContextActionService"); definedVars.add("debris");
-    definedVars.add("PluginManager"); definedVars.add("settings");
-
+    for (const name of BUILTINS) definedVars.add(name);
     for (const [name] of scope) definedVars.add(name);
+
+    // AST-level: add enum variants to defined set, collect struct body spans
+    const declarativeSpans: { start: number; end: number }[] = [];
+    walkDeclarative(ast, definedVars, declarativeSpans);
+
+    // Find byte offsets inside member-access positions: .ident or :ident
+    const memberAccessOffsets = findMemberAccessOffsets(source);
 
     const lines = source.split("\n");
     const identRe = /\b([a-zA-Z_]\w*)\b/g;
     let m: RegExpExecArray | null;
     while ((m = identRe.exec(source)) !== null) {
         const name = m[1];
+        const offset = m.index;
+
+        // Skip keywords
         if (["if", "else", "elif", "while", "for", "in", "return", "local", "function", "class",
             "struct", "enum", "import", "as", "break", "continue", "true", "false", "nil", "self",
             "public", "private", "try", "catch", "finally", "async", "await", "not", "and", "or", "is"].includes(name)) {
             continue;
         }
-        const prefix = source.substring(Math.max(0, m.index - 15), m.index).trimEnd();
+
+        // Skip if preceded by declaration keyword
+        const prefix = source.substring(Math.max(0, offset - 15), offset).trimEnd();
         if (DECL_KEYWORD_RE.test(prefix)) continue;
 
-        const matchLine = source.substring(0, m.index).split("\n").length;
+        // Skip f-string prefix (f"..." or f'...')
+        if (name === "f" && (source[offset + 1] === '"' || source[offset + 1] === "'")) continue;
+
+        // Skip table field keys ({key = value} or {key: value})
+        if (isTableFieldKey(source, offset, name)) continue;
+
+        // Skip if inside a declarative block span (enum/struct body)
+        if (declarativeSpans.some(s => offset >= s.start && offset < s.end)) continue;
+
+        // Skip if this is a member-access target (.ident or :ident)
+        if (memberAccessOffsets.has(offset)) continue;
+
+        // Skip if defined
+        if (definedVars.has(name)) continue;
+
+        // Skip comment/string lines
+        const beforeStr = source.substring(0, offset);
+        const matchLine = beforeStr.split("\n").length;
         const textLine = lines[matchLine - 1] ?? "";
         if (isCommentLine(textLine)) continue;
-        if (isInsideStringLine(source, m.index, matchLine)) continue;
+        if (isInsideStringLine(source, offset, matchLine)) continue;
 
-        if (!definedVars.has(name)) {
-            const beforeStr = source.substring(0, m.index);
-            const l = beforeStr.split("\n").length;
-            const lastNL = beforeStr.lastIndexOf("\n");
-            const col = (m.index) - (lastNL === -1 ? 0 : lastNL + 1) + 1;
-            diags.push({
-                range: { start: { line: l - 1, character: col - 1 }, end: { line: l - 1, character: col - 1 + name.length } },
-                severity: DiagnosticSeverity.Warning,
-                message: `Undefined variable '${name}'`,
-                source: "wolfram-scope",
-            });
-            definedVars.add(name);
+        const lastNL = beforeStr.lastIndexOf("\n");
+        const col = offset - (lastNL === -1 ? 0 : lastNL + 1) + 1;
+
+        diags.push({
+            range: {
+                start: { line: matchLine - 1, character: col - 1 },
+                end: { line: matchLine - 1, character: col - 1 + name.length },
+            },
+            severity: DiagnosticSeverity.Warning,
+            message: `Undefined variable '${name}'`,
+            source: "wolfram-scope",
+        });
+        definedVars.add(name);
+    }
+}
+
+// ====================================================================
+// HELPERS
+// ====================================================================
+
+/** Built-in Luau + Roblox globals that are always defined. */
+const BUILTINS = new Set([
+    "true", "false", "nil", "self",
+    "game", "workspace", "script",
+    "Enum", "task",
+    "print", "warn", "error",
+    "math", "string", "table", "os",
+    "require", "pcall", "xpcall",
+    "type", "typeof", "tostring", "tonumber",
+    "setmetatable", "getmetatable", "rawget", "rawset",
+    "unpack", "next", "ipairs", "pairs",
+    "tick", "time", "wait", "spawn", "delay",
+    "range",
+    "Instance", "Vector3", "Vector2", "CFrame",
+    "Color3", "BrickColor", "UDim2", "UDim",
+    "Ray", "TweenInfo", "Region3", "DateTime",
+    "Players", "ReplicatedStorage", "ServerStorage",
+    "ServerScriptService", "StarterPlayer", "Workspace",
+    "Lighting", "SoundService", "UserInputService",
+    "RunService", "ContextActionService", "debris",
+    "PluginManager", "settings",
+]);
+
+/**
+ * Scan the source for member-access patterns (.identifier or :identifier)
+ * and return the set of byte offsets where those identifiers start.
+ * These should NOT be flagged as undefined variables.
+ */
+function findMemberAccessOffsets(source: string): Set<number> {
+    const offsets = new Set<number>();
+    // Match .identifier or :identifier — capture the position of the ident
+    const re = /[.:]\s*([a-zA-Z_]\w*)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(source)) !== null) {
+        const identStart = m.index + m[0].indexOf(m[1]);
+        offsets.add(identStart);
+    }
+    return offsets;
+}
+
+/**
+ * Walk AST to collect enum variant names and struct field names into the
+ * defined set, and record the source span of enum/struct blocks so that
+ * identifiers inside them (e.g. type annotations like "number") are not flagged.
+ */
+function walkDeclarative(
+    stmts: Stmt[],
+    defined: Set<string>,
+    spans: { start: number; end: number }[]
+): void {
+    for (const s of stmts) {
+        switch (s.kind) {
+            case "EnumDef":
+                for (const v of s.variants) defined.add(v);
+                if (s.span) spans.push(s.span);
+                break;
+            case "StructDef":
+                for (const f of s.fields) defined.add(f.name);
+                if (s.span) spans.push(s.span);
+                break;
+            case "FuncDef":
+                walkDeclarative(s.block, defined, spans);
+                break;
+            case "ClassDef":
+                walkDeclarative(s.body, defined, spans);
+                break;
+            case "If":
+                walkDeclarative(s.thenBlock, defined, spans);
+                for (const [, b] of s.elseIfBlocks) walkDeclarative(b, defined, spans);
+                if (s.elseBlock) walkDeclarative(s.elseBlock, defined, spans);
+                break;
+            case "While":
+            case "For":
+                walkDeclarative(s.block, defined, spans);
+                break;
+            case "TryCatch":
+                walkDeclarative(s.tryBlock, defined, spans);
+                for (const [, , b] of s.catchClauses) walkDeclarative(b, defined, spans);
+                if (s.finallyBlock) walkDeclarative(s.finallyBlock, defined, spans);
+                break;
+            case "DecoratedStmt":
+                walkDeclarative([s.stmt], defined, spans);
+                break;
         }
     }
+}
+
+/**
+ * Detect if the current identifier is a table literal field key.
+ * Pattern: { ... Key = value } or { Key: value }
+ * Check: preceded by `{` or `,` (with optional whitespace+newlines),
+ * and followed by `=` or `:`.
+ */
+function isTableFieldKey(source: string, offset: number, name: string): boolean {
+    // Must be followed by = or :
+    const after = source.substring(offset + name.length);
+    const nextNonSpace = after.match(/^\s*([=:])/);
+    if (!nextNonSpace) return false;
+
+    // Must be preceded by { or ,
+    const before = source.substring(0, offset);
+    const prevNonSpace = before.match(/[{,]\s*$/);
+    return prevNonSpace !== null;
 }
 
 function extractLineCol(msg: string): { line: number; column: number } | null {
