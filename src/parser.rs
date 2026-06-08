@@ -1067,6 +1067,23 @@ impl<'a> Parser<'a> {
     }
 }
 
+pub fn parse_expr_str(source: &str) -> Result<Expr, String> {
+    use logos::Logos;
+    let tokens: Vec<crate::lexer::Token> = crate::lexer::Token::lexer(source)
+        .filter_map(|r| r.ok())
+        .collect();
+    let spans: Vec<usize> = crate::lexer::Token::lexer(source)
+        .spanned()
+        .filter_map(|(r, span)| r.ok().map(|_| span.start))
+        .collect();
+    let mut parser = Parser::new(tokens, spans, source);
+    let expr = parser.parse_expr()?;
+    if parser.peek().is_some() {
+        return Err("unexpected tokens after expression".into());
+    }
+    Ok(expr)
+}
+
 // Incremental parse entry point.
 // For now, does a full reparse. The change_range is tracked for future
 // optimization where only the affected region is re-parsed and stitched.

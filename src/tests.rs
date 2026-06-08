@@ -733,3 +733,13 @@ fn regression_braces_balanced_in_output() {
         }
     }
 }
+
+#[test]
+fn regression_fstring_length_interpolation() {
+    let src = "local products = [{name = \"a\"}, {name = \"b\"}]\nprint(f\"Total: {products.length} items\")\nprint(f\"Hello {user.name.length}\")\nprint(f\"Long: {deeply.nested.table.length}\")";
+    let result = transpile(src, "fstr.wrm").unwrap();
+    assert!(!result.contains(".length"), "f-string still has .length: {result}");
+    assert!(result.contains("{#products}"), "missing #products in f-string: {result}");
+    assert!(result.contains("{#user.name}"), "missing #user.name in f-string: {result}");
+    assert!(result.contains("{#deeply.nested.table}"), "missing #deeply.nested.table: {result}");
+}

@@ -854,6 +854,10 @@ impl LuauChecker {
     fn validate_api_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Member { obj, field, is_colon } => {
+                if !is_colon && field == "length" {
+                    self.result.warnings.push(warning_d(0, 0,
+                        format!("\".length\" is invalid Luau — use \"#<expr>\" instead")));
+                }
                 if !is_colon {
                     // Validate property: obj.Property
                     if let Some(obj_type) = self.infer_type(obj) {

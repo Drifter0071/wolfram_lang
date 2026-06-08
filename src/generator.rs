@@ -635,6 +635,61 @@ fn generate_expr(expr: &Expr, ctx: &GenContext) -> String {
     generate_expr_impl(expr, ctx, true)
 }
 
+fn process_fstring_interpolations(raw: &str, ctx: &GenContext) -> String {
+    let mut result = String::with_capacity(raw.len());
+    let chars: Vec<char> = raw.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '{' && i + 1 < chars.len() && chars[i + 1] == '{' {
+            result.push('{');
+            i += 2;
+            continue;
+        }
+        if chars[i] == '}' && i + 1 < chars.len() && chars[i + 1] == '}' {
+            result.push('}');
+            i += 2;
+            continue;
+        }
+        if chars[i] == '{' {
+            let mut depth = 1;
+            let mut expr_str = String::new();
+            i += 1;
+            while i < chars.len() && depth > 0 {
+                if chars[i] == '{' {
+                    depth += 1;
+                } else if chars[i] == '}' {
+                    depth -= 1;
+                    if depth == 0 {
+                        i += 1;
+                        break;
+                    }
+                }
+                expr_str.push(chars[i]);
+                i += 1;
+            }
+            if depth == 0 {
+                match crate::parser::parse_expr_str(&expr_str) {
+                    Ok(parsed) => {
+                        result.push('{');
+                        result.push_str(&generate_expr_impl(&parsed, ctx, false));
+                        result.push('}');
+                    }
+                    Err(_) => {
+                        result.push_str(&format!("{{{expr_str}}}"));
+                    }
+                }
+            } else {
+                result.push('{');
+                result.push_str(&expr_str);
+            }
+            continue;
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+    result
+}
+
 fn generate_expr_lvalue(expr: &Expr, ctx: &GenContext) -> String {
     generate_expr_impl(expr, ctx, false)
 }
@@ -645,7 +700,8 @@ fn generate_expr_impl(expr: &Expr, ctx: &GenContext, safe_chain: bool) -> String
         Expr::Str(s) => s.clone(),
         Expr::FString(s) => {
             let inner = &s[2..s.len() - 1];
-            format!("`{}`", inner)
+            let processed = process_fstring_interpolations(inner, ctx);
+            format!("`{}`", processed)
         }
         Expr::Bool(b) => b.to_string(),
         Expr::Nil => "nil".into(),
