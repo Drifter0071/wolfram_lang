@@ -1,12 +1,12 @@
 import {
     CompletionItem, CompletionItemKind, InsertTextFormat,
-    MarkupContent, MarkupKind,
+    MarkupKind,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { Bindings } from "./bindings";
-import { parseDocument } from "./parser";
+import { parseSource } from "./parser";
 import {
-    getLinePrefix, extractWordBefore, extractExprBeforeDot,
+    getLinePrefix, extractExprBeforeDot,
     isComment, isInsideString, isValuePosition, isInsideImportString, collectProjectWrmFiles,
 } from "./utils";
 

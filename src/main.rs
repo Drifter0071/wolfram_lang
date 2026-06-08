@@ -9,19 +9,6 @@ fn main() {
     let is_watch = args.iter().any(|a| a == "--watch" || a == "-w");
     let is_analyze = args.iter().any(|a| a == "--analyze" || a == "-a");
     let is_test = args.iter().any(|a| a == "--test" || a == "-t");
-    let is_lsp = args.iter().any(|a| a == "lsp");
-
-    if is_lsp {
-        let bindings_path = args
-            .iter()
-            .position(|a| a == "--bindings")
-            .and_then(|i| args.get(i + 1))
-            .map(|s| s.as_str());
-        if let Err(e) = wolfram::lsp::run(bindings_path) {
-            eprintln!("LSP error: {}", e);
-        }
-        return;
-    }
 
     let pos_args: Vec<&String> = args
         .iter()

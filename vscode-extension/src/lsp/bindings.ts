@@ -10,27 +10,6 @@ export interface WoldType { name: string; description: string; extends?: string 
 export interface WoldEnum { name: string; items: string[]; description: string; }
 export interface WoldFile { version: number; globals: WoldGlobal[]; functions: WoldFunction[]; types: WoldType[]; enums: WoldEnum[]; services: any[]; }
 
-export interface SymbolInfo {
-    name: string;
-    kind: string;
-    access: string;
-    location: { line: number; column: number; endLine: number; endColumn: number };
-    params: string[];
-    fields: string[];
-}
-
-export interface ImportInfo {
-    path: string;
-    alias: string;
-}
-
-export interface ParsedDocument {
-    symbols: SymbolInfo[];
-    imports: ImportInfo[];
-    scope: Map<string, string>;
-    lineCount: number;
-}
-
 export class Bindings {
     globals = new Map<string, WoldGlobal>();
     functions = new Map<string, WoldFunction>();

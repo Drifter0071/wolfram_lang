@@ -421,7 +421,7 @@ Source (.wrm)
 ```
 src/
 ├── main.rs                  CLI entry point
-├── lib.rs                   Library API (transpile, analyze, LSP)
+├── lib.rs                   Library API (transpile, analyze)
 ├── lexer.rs                 Tokenizer (logos-based)
 ├── parser.rs                Recursive descent parser
 ├── ast.rs                   AST node definitions with source spans
@@ -440,12 +440,6 @@ src/
 ├── cli.rs                   CLI helpers (project transpile, file collection)
 ├── watch.rs                 File watcher (notify-based)
 ├── tests.rs                 Unit tests (18 tests)
-└── lsp/
-    ├── mod.rs
-    ├── handlers.rs          LSP request handlers
-    ├── store.rs             Document store + line mapping
-    ├── symbols.rs           Document symbol provider
-    └── semantic_tokens.rs   Semantic token highlighting
 ```
 
 ---

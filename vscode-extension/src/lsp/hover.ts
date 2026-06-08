@@ -1,7 +1,7 @@
-import { Hover, MarkupContent, MarkupKind } from "vscode-languageserver/node";
+import { Hover, MarkupKind } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { Bindings } from "./bindings";
-import { parseDocument } from "./parser";
+import { parseSource } from "./parser";
 import { extractWordAround } from "./utils";
 
 interface KeywordDef { label: string; doc: string; }
@@ -147,7 +147,7 @@ export function handleHover(
             const parts = expr.split(".");
             const lastPart = parts[parts.length - 1];
             const parentExpr = parts.slice(0, -1).join(".");
-            const parsed = parseDocument(source);
+            const parsed = parseSource(source);
             const parentType = resolveExprType(parentExpr, bindings, parsed.scope);
             if (parentType) {
                 // Try property hover
@@ -168,7 +168,7 @@ export function handleHover(
     }
 
     // Local scope symbols
-    const parsed = parseDocument(source);
+    const parsed = parseSource(source);
     const localType = parsed.scope.get(word);
     if (localType) {
         const sym = parsed.symbols.find(s => s.name === word);
