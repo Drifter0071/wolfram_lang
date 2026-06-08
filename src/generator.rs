@@ -202,7 +202,11 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
         } => {
             let inferred_type = infer_expr_type(value, ctx);
             if let Expr::Ident(name) = target {
-                ctx.declare_var(name.clone(), inferred_type);
+                let is_private_member = ctx.class_name.is_some()
+                    && (ctx.private_vars.contains(name) || ctx.private_methods.contains(name));
+                if !is_private_member {
+                    ctx.declare_var(name.clone(), inferred_type);
+                }
             }
             let assign_op = match op {
                 Some(o) => format!(" {}= ", o),
@@ -558,7 +562,13 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
             }
 
             if has_init {
-                s.push_str("    self:init(...)\n");
+                let init_is_private = body.iter().any(|b| matches!(b,
+                    Stmt::FuncDef { name: n, access, .. } if n == "init" && access == "private"));
+                if init_is_private {
+                    s.push_str(&format!("    __private_{}[self].init(self, ...)\n", name));
+                } else {
+                    s.push_str("    self:init(...)\n");
+                }
             }
             s.push_str("    return self\nend\n\n");
 
