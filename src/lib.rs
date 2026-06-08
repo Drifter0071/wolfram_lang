@@ -35,7 +35,7 @@ pub fn tokenize_and_parse(source_code: &str) -> Result<Vec<Stmt>, String> {
     let mut spans = Vec::new();
     for (res, span) in Token::lexer(source_code).spanned() {
         if let Ok(tok) = res {
-            if matches!(tok, Token::Comment(_)) {
+            if matches!(tok, Token::CommentDash(_) | Token::CommentSlash(_)) {
                 continue;
             }
             tokens.push(tok);

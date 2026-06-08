@@ -50,12 +50,12 @@ export type Expr =
     | { kind: "ListComp"; elt: Expr; generators: CompGenerator[] };
 
 export type Stmt =
-    | { kind: "Local"; name: string; value: Expr | null; access: string; span: Span }
+    | { kind: "Local"; names: string[]; value: Expr | null; access: string; span: Span }
     | { kind: "Assign"; target: Expr; value: Expr; op: string | null; span: Span }
     | { kind: "Return"; value: Expr | null; span: Span }
     | { kind: "If"; cond: Expr; thenBlock: Stmt[]; elseIfBlocks: [Expr, Stmt[]][]; elseBlock: Stmt[] | null; span: Span }
     | { kind: "While"; cond: Expr; block: Stmt[]; span: Span }
-    | { kind: "For"; var: string; iter: Expr; block: Stmt[]; span: Span }
+    | { kind: "For"; vars: string[]; iter: Expr; block: Stmt[]; span: Span }
     | { kind: "FuncDef"; name: string; params: string[]; paramTypes: (string | null)[]; paramDefaults: (Expr | null)[]; block: Stmt[]; access: string; isAsync: boolean; span: Span }
     | { kind: "ClassDef"; name: string; body: Stmt[]; access: string; span: Span }
     | { kind: "ExprStmt"; expr: Expr; span: Span }

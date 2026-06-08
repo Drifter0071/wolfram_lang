@@ -17,10 +17,10 @@ export function computeInlayHints(store: DocumentStore, uri: string): InlayHint[
 
 function extractTypeHints(stmt: Stmt, source: string): InlayHint[] {
     const hints: InlayHint[] = [];
-    if (stmt.kind === "Local" && stmt.value) {
+    if (stmt.kind === "Local" && stmt.value && stmt.names.length >= 1) {
         const typeStr = inferExprType(stmt.value);
-        if (typeStr !== "any" && typeStr !== "" && typeStr !== stmt.name) {
-            const pos = findIdentEnd(source, stmt.name);
+        if (typeStr !== "any" && typeStr !== "" && typeStr !== stmt.names[0]) {
+            const pos = findIdentEnd(source, stmt.names[0]);
             if (pos) {
                 hints.push({
                     position: { line: pos.line, character: pos.character },

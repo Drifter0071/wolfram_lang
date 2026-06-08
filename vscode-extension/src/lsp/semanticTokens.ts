@@ -71,7 +71,7 @@ function walkStmts(stmts: Stmt[], source: string, tokens: InternalToken[], insid
 function walkStmt(stmt: Stmt, source: string, tokens: InternalToken[], insideClass: boolean): void {
     switch (stmt.kind) {
         case "Local": {
-            pushIdent(source, stmt.name, tokens, TYPE_VARIABLE);
+            pushIdent(source, stmt.names[0], tokens, TYPE_VARIABLE);
             if (stmt.value) walkExpr(stmt.value, source, tokens);
             break;
         }
@@ -101,7 +101,7 @@ function walkStmt(stmt: Stmt, source: string, tokens: InternalToken[], insideCla
         }
         case "For": {
             pushKw("", 0, "for", tokens);
-            pushIdent(source, stmt.var, tokens, TYPE_VARIABLE);
+            pushIdent(source, stmt.vars[0], tokens, TYPE_VARIABLE);
             walkExpr(stmt.iter, source, tokens);
             walkStmts(stmt.block, source, tokens, insideClass);
             break;

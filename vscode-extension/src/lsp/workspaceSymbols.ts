@@ -32,8 +32,8 @@ function stmtToSymbol(stmt: Stmt, uri: string, query: string): WorkspaceSymbol |
             if (!stmt.name.toLowerCase().includes(query)) return null;
             return { name: stmt.name, kind: SymbolKind.Struct, location: { uri, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } } };
         case "Local":
-            if (!stmt.name.toLowerCase().includes(query)) return null;
-            return { name: stmt.name, kind: SymbolKind.Variable, location: { uri, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } } };
+            if (!stmt.names[0].toLowerCase().includes(query)) return null;
+            return { name: stmt.names[0], kind: SymbolKind.Variable, location: { uri, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } } };
         default:
             return null;
     }

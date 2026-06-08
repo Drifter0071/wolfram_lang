@@ -23,6 +23,8 @@ struct GenContext {
     out_dir: String,
     importing_file: Option<String>,
     services: Vec<String>,
+    module_prefix: Option<String>,
+    module_exports: HashSet<String>,
 }
 
 impl GenContext {
@@ -161,6 +163,14 @@ fn infer_expr_type(expr: &Expr, ctx: &GenContext) -> InferredType {
         }
         Expr::Logical { .. } => InferredType::Bool,
         Expr::Not(_) => InferredType::Bool,
+    }
+}
+
+fn module_ref(ctx: &GenContext, name: &str) -> Option<String> {
+    if let Some(ref prefix) = ctx.module_prefix {
+        Some(format!("{}.{}", prefix, name))
+    } else {
+        None
     }
 }
 
@@ -347,7 +357,11 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
             ..
         } => {
             ctx.push_scope();
-            let mut s = format!("{}local function {}({})\n", ind, name, params.join(", "));
+            let mut s = if let Some(ref_name) = module_ref(ctx, name) {
+                format!("{}{} = function({})\n", ind, ref_name, params.join(", "))
+            } else {
+                format!("{}local function {}({})\n", ind, name, params.join(", "))
+            };
             for (i, default) in param_defaults.iter().enumerate() {
                 if let Some(default_expr) = default {
                     let pname = &params[i];
@@ -425,6 +439,8 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
             generate_stmt(stmt, indent, ctx)
         }
         Stmt::ClassDef { name, body, .. } => {
+            let ref_name = module_ref(ctx, name);
+
             let mut private_vars = HashSet::new();
             let mut private_methods = HashSet::new();
             for b in body {
@@ -447,7 +463,7 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                 }
             }
 
-            let mut ctx = GenContext {
+            let mut class_ctx = GenContext {
                 class_name: Some(name.clone()),
                 private_vars,
                 private_methods,
@@ -459,11 +475,23 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                 out_dir: String::new(),
                 importing_file: None,
                 services: Vec::new(),
+                module_prefix: ctx.module_prefix.clone(),
+                module_exports: ctx.module_exports.clone(),
             };
 
             let has_init = body
                 .iter()
                 .any(|b| matches!(b, Stmt::FuncDef { name: m_name, .. } if m_name == "init"));
+
+            let name_use: String;
+            let empty_decl: String;
+            if let Some(ref r) = ref_name {
+                name_use = r.clone();
+                empty_decl = format!("{} = {{}}\n", r);
+            } else {
+                name_use = name.clone();
+                empty_decl = format!("local {} = {{}}\n", name);
+            }
 
             let mut s = String::new();
             s.push_str(&format!("-- Auto-generated Class: {}\n", name));
@@ -471,15 +499,15 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                 "local __private_{} = setmetatable({{}}, {{__mode = \"k\"}})\n",
                 name
             ));
-            s.push_str(&format!("local {} = {{}}\n", name));
-            s.push_str(&format!("{}.__index = {}\n\n", name, name));
+            s.push_str(&empty_decl);
+            s.push_str(&format!("{}.__index = {}\n\n", name_use, name_use));
 
             if has_init {
-                s.push_str(&format!("function {}.new(...)\n", name));
+                s.push_str(&format!("function {}.new(...)\n", name_use));
             } else {
-                s.push_str(&format!("function {}.new()\n", name));
+                s.push_str(&format!("function {}.new()\n", name_use));
             }
-            s.push_str(&format!("    local self = setmetatable({{}}, {})\n", name));
+            s.push_str(&format!("    local self = setmetatable({{}}, {})\n", name_use));
             s.push_str(&format!("    __private_{}[self] = {{}}\n", name));
 
             for b in body {
@@ -492,7 +520,7 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                 {
                     let val_str = value
                         .as_ref()
-                        .map(|v| generate_expr(v, &ctx))
+                        .map(|v| generate_expr(v, &class_ctx))
                         .unwrap_or("nil".into());
                     if access == "private" {
                         s.push_str(&format!(
@@ -517,15 +545,13 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                     if access == "private" {
                         s.push_str(&format!(
                             "    __private_{}[self].{} = function({})\n",
-                            name,
-                            m_name,
-                            params.join(", ")
+                            name, m_name, params.join(", ")
                         ));
-                        ctx.push_scope();
+                        class_ctx.push_scope();
                         for mb in block {
-                            s.push_str(&generate_stmt(mb, 2, &mut ctx));
+                            s.push_str(&generate_stmt(mb, 2, &mut class_ctx));
                         }
-                        ctx.pop_scope();
+                        class_ctx.pop_scope();
                         s.push_str("    end\n");
                     }
                 }
@@ -546,17 +572,12 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                 } = b
                 {
                     if access == "public" {
-                        s.push_str(&format!(
-                            "function {}:{}({})\n",
-                            name,
-                            m_name,
-                            params.join(", ")
-                        ));
-                        ctx.push_scope();
+                        s.push_str(&format!("function {}:{}({})\n", name_use, m_name, params.join(", ")));
+                        class_ctx.push_scope();
                         for mb in block {
-                            s.push_str(&generate_stmt(mb, 1, &mut ctx));
+                            s.push_str(&generate_stmt(mb, 1, &mut class_ctx));
                         }
-                        ctx.pop_scope();
+                        class_ctx.pop_scope();
                         s.push_str("end\n");
                     }
                 }
@@ -569,12 +590,17 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                 .iter()
                 .map(|v| format!("{} = \"{}\"", v, v))
                 .collect();
-            format!(
-                "{}local {} = table.freeze({{{}}})\n",
-                ind,
-                name,
-                variant_strs.join(", ")
-            )
+            if let Some(ref_name) = module_ref(ctx, name) {
+                format!(
+                    "{}{} = table.freeze({{{}}})\n",
+                    ind, ref_name, variant_strs.join(", ")
+                )
+            } else {
+                format!(
+                    "{}local {} = table.freeze({{{}}})\n",
+                    ind, name, variant_strs.join(", ")
+                )
+            }
         }
         Stmt::StructDef { name, fields, .. } => {
             ctx.declare_var(name.clone(), InferredType::Table);
@@ -584,15 +610,19 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                 .iter()
                 .map(|f| format!("{} = {}", f, f))
                 .collect();
-            let mut s = format!("{}local {} = {{}}\n", ind, name);
-            s.push_str(&format!("{}function {}.new({})\n", ind, name, params));
-            s.push_str(&format!(
-                "{}    return {{{}}}\n",
-                ind,
-                field_assignments.join(", ")
-            ));
-            s.push_str(&format!("{}end\n", ind));
-            s
+            if let Some(ref_name) = module_ref(ctx, name) {
+                let mut s = format!("{}{} = {{}}\n", ind, ref_name);
+                s.push_str(&format!("{}function {}.new({})\n", ind, ref_name, params));
+                s.push_str(&format!("{}    return {{{}}}\n", ind, field_assignments.join(", ")));
+                s.push_str(&format!("{}end\n", ind));
+                s
+            } else {
+                let mut s = format!("{}local {} = {{}}\n", ind, name);
+                s.push_str(&format!("{}function {}.new({})\n", ind, name, params));
+                s.push_str(&format!("{}    return {{{}}}\n", ind, field_assignments.join(", ")));
+                s.push_str(&format!("{}end\n", ind));
+                s
+            }
         }
     }
 }
@@ -705,7 +735,14 @@ fn generate_expr_impl(expr: &Expr, ctx: &GenContext, safe_chain: bool) -> String
         }
         Expr::Bool(b) => b.to_string(),
         Expr::Nil => "nil".into(),
-        Expr::Ident(name) => name.clone(),
+        Expr::Ident(name) => {
+            if ctx.module_exports.contains(name) {
+                if let Some(ref prefix) = ctx.module_prefix {
+                    return format!("{}.{}", prefix, name);
+                }
+            }
+            name.clone()
+        }
         Expr::SelfExpr => "self".into(),
         Expr::UnaryMinus(e) => format!("-{}", generate_expr(e, ctx)),
         Expr::Grouping(e) => format!("({})", generate_expr(e, ctx)),
@@ -850,6 +887,8 @@ fn generate_expr_impl(expr: &Expr, ctx: &GenContext, safe_chain: bool) -> String
                 out_dir: ctx.out_dir.clone(),
                 importing_file: ctx.importing_file.clone(),
                 services: Vec::new(),
+                module_prefix: ctx.module_prefix.clone(),
+                module_exports: ctx.module_exports.clone(),
             };
             fn_ctx.push_scope();
             let mut s = format!("function({})\n", params.join(", "));
@@ -930,7 +969,33 @@ pub fn generate(
     deployments: &[DeploymentEntry],
     out_dir: &str,
 ) -> String {
+    let mut module_exports: HashSet<String> = HashSet::new();
+    if !roblox_mode {
+        for stmt in ast {
+            match stmt {
+                Stmt::ClassDef { name, access, .. } if access == "public" => { module_exports.insert(name.clone()); }
+                Stmt::EnumDef { name, access, .. } if access == "public" => { module_exports.insert(name.clone()); }
+                Stmt::StructDef { name, access, .. } if access == "public" => { module_exports.insert(name.clone()); }
+                Stmt::FuncDef { name, access, .. } if access == "public" => { module_exports.insert(name.clone()); }
+                Stmt::Local { name, access, .. } if access == "public" => { module_exports.insert(name.clone()); }
+                _ => {}
+            }
+        }
+    }
+
+    let module_prefix = if !roblox_mode && !module_exports.is_empty() {
+        Some("module".to_string())
+    } else {
+        None
+    };
+
     let mut output = String::new();
+
+    // Module wrapper header
+    if module_prefix.is_some() {
+        output.push_str("local module = {}\n");
+    }
+
     let mut global_ctx = GenContext {
         class_name: None,
         private_vars: HashSet::new(),
@@ -943,6 +1008,8 @@ pub fn generate(
         out_dir: out_dir.to_string(),
         importing_file: importing_file.map(|s| s.to_string()),
         services: Vec::new(),
+        module_prefix,
+        module_exports,
     };
 
     // Generate imports first (to collect services)
@@ -986,31 +1053,8 @@ pub fn generate(
         return output;
     }
 
-    let mut exports: Vec<String> = Vec::new();
-    for stmt in ast {
-        match stmt {
-            Stmt::ClassDef { name, access, .. } if access == "public" => {
-                exports.push(name.clone());
-            }
-            Stmt::EnumDef { name, access, .. } if access == "public" => {
-                exports.push(name.clone());
-            }
-            Stmt::StructDef { name, access, .. } if access == "public" => {
-                exports.push(name.clone());
-            }
-            Stmt::FuncDef { name, access, .. } if access == "public" => {
-                exports.push(name.clone());
-            }
-            Stmt::Local { name, access, .. } if access == "public" => {
-                exports.push(name.clone());
-            }
-            _ => {}
-        }
-    }
-
-    if !exports.is_empty() {
-        let fields: Vec<String> = exports.iter().map(|n| format!("{} = {}", n, n)).collect();
-        output.push_str(&format!("\nreturn {{{}}}\n", fields.join(", ")));
+    if !global_ctx.module_exports.is_empty() {
+        output.push_str("\nreturn module\n");
     }
 
     output

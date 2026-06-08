@@ -34,7 +34,7 @@ type TokenType =
     | "PLUSASSIGN" | "MINUSASSIGN" | "STARASSIGN" | "SLASHASSIGN" | "PERCENTASSIGN"
     | "ARROW" | "LBRACE" | "RBRACE" | "LBRACKET" | "RBRACKET" | "LPAREN" | "RPAREN"
     | "COMMA" | "DOT" | "COLON" | "ASSIGN" | "SEMICOLON" | "QUESTION" | "AT"
-    | "PLUS" | "MINUS" | "STAR" | "SLASH" | "PERCENT" | "LT" | "GT"
+    | "PLUS" | "MINUS" | "STAR" | "SLASH" | "PERCENT" | "LT" | "GT" | "CARET"
     | "IDENT" | "NUMBER" | "FSTRING" | "STRINGLIT" | "COMMENT";
 
 interface Token {
@@ -147,6 +147,7 @@ function tokenize(source: string): Token[] {
             ":": "COLON", "=": "ASSIGN", ";": "SEMICOLON", "?": "QUESTION",
             "@": "AT", "+": "PLUS", "-": "MINUS", "*": "STAR",
             "/": "SLASH", "%": "PERCENT", "<": "LT", ">": "GT",
+            "^": "CARET",
         };
         if (singleMap[c]) {
             tokens.push({ type: singleMap[c], value: c, span: { start: i, end: i + 1 } });
@@ -295,7 +296,12 @@ class Parser {
     private parseLocal(): Stmt {
         const startTok = this.expect("LOCAL");
         const nameTok = this.expect("IDENT");
-        const name = nameTok.value;
+        const names = [nameTok.value];
+        while (this.peek()?.type === "COMMA") {
+            this.advance();
+            const n = this.expect("IDENT");
+            names.push(n.value);
+        }
         let value: Expr | null = null;
 
         if (this.peek()?.type === "ASSIGN") {
@@ -304,18 +310,19 @@ class Parser {
         }
         this.semicolonOrEnd();
 
-        // Record symbol
-        this.symbols.push({
-            name, kind: "variable", access: "private",
-            location: { line: 0, column: 0, endLine: 0, endColumn: 0 },
-            params: [], fields: [],
-        });
+        for (const n of names) {
+            this.symbols.push({
+                name: n, kind: "variable", access: "private",
+                location: { line: 0, column: 0, endLine: 0, endColumn: 0 },
+                params: [], fields: [],
+            });
 
-        let varType = "any";
-        if (value) varType = this.inferExprType(value);
-        this.scope.set(name, varType);
+            let varType = "any";
+            if (value) varType = this.inferExprType(value);
+            this.scope.set(n, varType);
+        }
 
-        return { kind: "Local", name, value, access: "private", span: this.currentSpan() };
+        return { kind: "Local", names, value, access: "private", span: this.currentSpan() };
     }
 
     private parseLocalFunction(): Stmt {
@@ -392,11 +399,17 @@ class Parser {
     private parseFor(): Stmt {
         this.expect("FOR");
         const varTok = this.expect("IDENT");
+        const vars = [varTok.value];
+        if (this.peek()?.type === "COMMA") {
+            this.advance();
+            const v2 = this.expect("IDENT");
+            vars.push(v2.value);
+        }
         this.expect("IN");
         const iter = this.parseExpr();
         const block = this.parseBlock();
-        this.scope.set(varTok.value, "any");
-        return { kind: "For", var: varTok.value, iter, block, span: this.currentSpan() };
+        for (const v of vars) this.scope.set(v, "any");
+        return { kind: "For", vars, iter, block, span: this.currentSpan() };
     }
 
     private parseReturn(): Stmt {
@@ -699,7 +712,7 @@ class Parser {
 
     private parseMultiplication(): Expr {
         let expr = this.parseUnary();
-        while (["STARSTAR", "SLASHSLASH", "STAR", "SLASH", "PERCENT"].includes(this.peek()?.type ?? "")) {
+        while (["STARSTAR", "CARET", "SLASHSLASH", "STAR", "SLASH", "PERCENT"].includes(this.peek()?.type ?? "")) {
             let op = this.advance()!.value;
             if (op === "**") op = "^";
             expr = { kind: "Binary", left: expr, op, right: this.parseUnary() };

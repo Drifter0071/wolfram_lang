@@ -105,6 +105,8 @@ impl<'a> Parser<'a> {
                 | Some(Token::Number(_))
                 | Some(Token::StringLit(_))
                 | Some(Token::FString(_))
+                | Some(Token::Try)
+                | Some(Token::Async)
         )
     }
 
@@ -238,6 +240,17 @@ impl<'a> Parser<'a> {
             Some(Token::Ident(n)) => n,
             _ => return Err(self.err_msg("Expected variable name")),
         };
+        let mut var_names = vec![name];
+        // Multi-variable local: local a, b = expr()
+        while self.peek() == Some(&Token::Comma) {
+            self.advance(); // consume comma
+            let v = match self.advance() {
+                Some(Token::Ident(n)) => n,
+                _ => return Err(self.err_msg("Expected variable name after comma")),
+            };
+            var_names.push(v);
+        }
+        let joined = var_names.join(", ");
 
         let mut value = None;
         if self.peek() == Some(&Token::Assign) {
@@ -246,7 +259,7 @@ impl<'a> Parser<'a> {
         }
         self.semicolon_or_end()?;
         Ok(Stmt::Local {
-            name,
+            name: joined,
             value,
             access: "private".into(),
             span: self.current_span(),
@@ -343,6 +356,14 @@ impl<'a> Parser<'a> {
             Some(Token::Ident(n)) => n,
             _ => return Err(self.err_msg("Expected variable name in for loop")),
         };
+        // Support `for k, v in iter` multi-variable for-in
+        if self.peek() == Some(&Token::Comma) {
+            self.advance(); // consume comma
+            let _second = match self.advance() {
+                Some(Token::Ident(v)) => v,
+                _ => return Err(self.err_msg("Expected second variable name after comma in for loop")),
+            };
+        }
         self.expect(Token::In)?;
         let iter = self.parse_expr()?;
         let block = self.parse_block()?;
@@ -799,13 +820,13 @@ impl<'a> Parser<'a> {
         loop {
             match self.peek() {
                 Some(Token::StarStar)
-                | Some(Token::SlashSlash)
+                | Some(Token::Caret)
                 | Some(Token::Star)
                 | Some(Token::Slash)
                 | Some(Token::Percent) => {
                     let op = match self.advance().unwrap() {
                         Token::StarStar => "^",
-                        Token::SlashSlash => "//",
+                        Token::Caret => "^",
                         Token::Star => "*",
                         Token::Slash => "/",
                         Token::Percent => "%",

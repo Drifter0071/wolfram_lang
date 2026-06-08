@@ -571,7 +571,10 @@ fn h1_parse_empty_file() {
 #[test]
 fn h2_only_comments() {
     match transpile("// comment\n// another line", "h2.wrm") {
-        Ok(r) => assert!(r.trim().is_empty() || r.contains("//"), "got: {r:?}"),
+        Ok(r) => {
+            let non_comment = r.lines().filter(|l| !l.starts_with("--")).collect::<Vec<_>>().join("\n");
+            assert!(non_comment.trim().is_empty(), "expected only warnings, got: {r}");
+        }
         Err(_) => {}
     }
 }
@@ -663,8 +666,8 @@ fn k2_same_name_as_global() {
 fn k3_public_export_no_roblox() {
     let src = "public function greet() {\n    return \"hello\"\n}";
     let r = transpile(src, "k3.wrm").unwrap();
-    assert!(r.contains("local function greet()"));
-    assert!(r.contains("return {greet = greet}"));
+    assert!(r.contains("module.greet = function()"));
+    assert!(r.contains("return module"));
 }
 
 #[test]
@@ -742,4 +745,894 @@ fn regression_fstring_length_interpolation() {
     assert!(result.contains("{#products}"), "missing #products in f-string: {result}");
     assert!(result.contains("{#user.name}"), "missing #user.name in f-string: {result}");
     assert!(result.contains("{#deeply.nested.table}"), "missing #deeply.nested.table: {result}");
+}
+
+// ─── L: Data Persistence / DataStore ───────────────────────────────
+// Tests: realistic save/load patterns used in Roblox games
+
+#[test]
+fn l1_datastore_get_async() {
+    let src = r#"
+local DSS = game:GetService("DataStoreService")
+local store = DSS:GetDataStore("PlayerData")
+local function loadData(player) {
+    local key = "player_" + tostring(player.UserId)
+    local data = store:GetAsync(key)
+    if (data == nil) {
+        data = {coins: 0, level: 1}
+    }
+    return data
+}
+"#;
+    let r = transpile(src, "l1.wrm").unwrap();
+    assert!(r.contains("DataStoreService"));
+    assert!(r.contains("GetDataStore"));
+    assert!(r.contains("GetAsync"));
+    assert!(r.contains("local function loadData(player)"));
+    assert!(r.contains("tostring(player.UserId)"));
+}
+
+#[test]
+fn l2_datastore_set_async_with_pcall() {
+    let src = r#"
+try {
+    store:SetAsync(key, playerData)
+    print("Saved!")
+} catch {
+    warn("Failed to save data for " + player.Name)
+}
+"#;
+    let r = transpile(src, "l2.wrm").unwrap();
+    assert!(r.contains("pcall("));
+    assert!(r.contains("if not ok then"));
+    assert!(r.contains("SetAsync(key, playerData)"));
+}
+
+#[test]
+fn l3_player_data_autosave() {
+    let src = r#"
+local function autoSave(player) {
+    local data = {
+        coins: leaderstats.coins.Value,
+        xp: leaderstats.xp.Value,
+        lastSave: os.time(),
+    }
+    local ok, err = pcall(function() {
+        store:SetAsync(player.UserId, data)
+    })
+    if (not ok) {
+        warn("Autosave failed")
+    }
+}
+Players.PlayerRemoving:Connect(autoSave)
+"#;
+    let r = transpile(src, "l3.wrm").unwrap();
+    assert!(r.contains("local function autoSave(player)"));
+    assert!(r.contains("os.time()"));
+    assert!(r.contains("pcall("));
+}
+
+#[test]
+fn l4_datastore_update_async() {
+    let src = r#"
+local function addCoins(player, amount) {
+    local success = store:UpdateAsync(player.UserId, function(oldData) {
+        if (oldData == nil) {
+            oldData = {coins: 0}
+        }
+        oldData.coins = oldData.coins + amount
+        return oldData
+    })
+    return success
+}
+"#;
+    let r = transpile(src, "l4.wrm").unwrap();
+    assert!(r.contains("UpdateAsync"));
+    assert!(r.contains("local success = store:UpdateAsync("));
+    assert!(r.contains("oldData.coins = oldData.coins + amount"));
+}
+
+// ─── M: Remote Events/Functions ────────────────────────────────────
+
+#[test]
+fn m1_remote_event_fire_all_clients() {
+    let src = r#"
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local updateGoldEvent = ReplicatedStorage:FindFirstChild("UpdateGold")
+local function updateGold(player, amount) {
+    local stats = leaderstats:FindFirstChild(player.Name)
+    if (stats) {
+        stats.Gold.Value = stats.Gold.Value + amount
+        updateGoldEvent:FireAllClients(player, amount)
+    }
+}
+"#;
+    let r = transpile(src, "m1.wrm").unwrap();
+    assert!(r.contains("ReplicatedStorage"));
+    assert!(r.contains("FindFirstChild"));
+    assert!(r.contains("FireAllClients"));
+}
+
+#[test]
+fn m2_remote_function_callback() {
+    let src = r#"
+local checkPass = ReplicatedStorage:FindFirstChild("CheckGamepass")
+checkPass.OnServerInvoke = function(player, passId) {
+    local hasPass = game:GetService("MarketplaceService"):UserOwnsGamePassAsync(player.UserId, passId)
+    return hasPass
+}
+"#;
+    let r = transpile(src, "m2.wrm").unwrap();
+    assert!(r.contains("OnServerInvoke"));
+    assert!(r.contains("MarketplaceService"));
+    assert!(r.contains("UserOwnsGamePassAsync"));
+}
+
+#[test]
+fn m3_predicted_client_event() {
+    let src = r#"
+local shootEvent = ReplicatedStorage:FindFirstChild("Shoot")
+local function fireWeapon() {
+    local mousePos = player:GetMouse().Hit.Position
+    shootEvent:FireServer(mousePos, weapon.Damage)
+}
+Tool.Activated:Connect(fireWeapon)
+"#;
+    let r = transpile(src, "m3.wrm").unwrap();
+    assert!(r.contains("FireServer"));
+    assert!(r.contains("GetMouse"));
+    assert!(r.contains("Tool.Activated:Connect(fireWeapon)"));
+}
+
+// ─── N: Game Mechanics / Tycoon ────────────────────────────────────
+
+#[test]
+fn n1_tycoon_income_loop() {
+    let src = r#"
+while (true) {
+    for tycoon in allTycoons {
+        if (tycoon.owner) {
+            tycoon.cash = tycoon.cash + tycoon.income
+            tycoon:updateGui()
+        }
+    }
+    task.wait(1)
+}
+"#;
+    let r = transpile(src, "n1.wrm").unwrap();
+    assert!(r.contains("for tycoon, _ in pairs"));
+    assert!(r.contains("tycoon.cash = tycoon.cash + tycoon.income"));
+    assert!(r.contains("task.wait(1)"));
+}
+
+#[test]
+fn n2_touch_debounce_pattern() {
+    let src = r#"
+local db = false
+local debounceTime = 2
+part.Touched:Connect(function(hit) {
+    if (db) { return }
+    db = true
+    local char = hit.Parent:FindFirstChild("Humanoid")
+    if (char) {
+        char.Health = char.Health - 10
+    }
+    task.wait(debounceTime)
+    db = false
+})
+"#;
+    let r = transpile(src, "n2.wrm").unwrap();
+    assert!(r.contains("local debounceTime = 2"));
+    assert!(r.contains("if db then"));
+    assert!(r.contains("db = false"));
+}
+
+#[test]
+fn n3_obby_checkpoint_system() {
+    let src = r#"
+local checkpoints = [stage1, stage2, stage3, stage4, stage5]
+for cp in checkpoints {
+    cp.Touched:Connect(function(hit) {
+        local player = game.Players:GetPlayerFromCharacter(hit.Parent)
+        if (player) {
+            local stage = cp:GetAttribute("Stage")
+            player:SetAttribute("Checkpoint", stage)
+        }
+    })
+}
+"#;
+    let r = transpile(src, "n3.wrm").unwrap();
+    assert!(r.contains("GetPlayerFromCharacter"));
+    assert!(r.contains("GetAttribute"));
+    assert!(r.contains("SetAttribute"));
+}
+
+// ─── O: Module Scripts / Shared Code ───────────────────────────────
+
+#[test]
+fn o1_shared_utility_module() {
+    let src = r#"
+public function deepCopy(tbl) {
+    local result = {}
+    for key, val in tbl {
+        if (typeof(val) == "table") {
+            result[key] = deepCopy(val)
+        } else {
+            result[key] = val
+        }
+    }
+    return result
+}
+"#;
+    let r = transpile(src, "o1.wrm").unwrap();
+    assert!(r.contains("return module"));
+    assert!(r.contains("module.deepCopy = function"));
+    assert!(r.contains("typeof(val)"));
+}
+
+#[test]
+fn o2_class_exported_as_module() {
+    let src = r#"
+public struct PlayerData {
+    gold, level, xp
+}
+public class ShopManager {
+    public function buyItem(player, itemId) {
+        local data = DataStore.load(player)
+        local item = items[itemId]
+        if (data.gold >= item.price) {
+            data.gold = data.gold - item.price
+            DataStore.save(player, data)
+            return true
+        }
+        return false
+    }
+}
+"#;
+    let r = transpile(src, "o2.wrm").unwrap();
+    assert!(r.contains("local module = {}"));
+    assert!(r.contains("module.PlayerData = {}"));
+    assert!(r.contains("module.ShopManager"));
+    assert!(r.contains("return module"));
+    assert!(r.contains("function module.ShopManager:buyItem("));
+}
+
+#[test]
+fn o3_multiple_public_exports() {
+    let src = r#"
+public enum GameState { Lobby, Intermission, Playing, Ended }
+public struct MatchInfo { map, players, timeLimit }
+public function calculateElo(winner, loser) {
+    local k = 32
+    local expected = 1.0 / (1.0 + 10.0 ^ ((loser - winner) / 400.0))
+    return round(k * (1.0 - expected))
+}
+"#;
+    let r = transpile(src, "o3.wrm").unwrap();
+    assert!(r.contains("return module"));
+    assert!(r.contains("module.GameState"));
+    assert!(r.contains("module.MatchInfo"));
+    assert!(r.contains("module.calculateElo ="));
+}
+
+#[test]
+fn o4_import_and_use_shared_module() {
+    let src = r#"
+import "../shared/config" as Config
+import "../shared/utils" as Utils
+local function setupGame() {
+    local maxPlayers = Config.maxPlayers
+    local seed = Config.mapSeed
+    Utils.shuffleDeck()
+    return maxPlayers
+}
+"#;
+    let r = transpile(src, "o4.wrm").unwrap();
+    assert!(r.contains("Config = require("));
+    assert!(r.contains("Utils = require("));
+    assert!(r.contains("Config.maxPlayers"));
+}
+
+// ─── P: Leaderboard / Leaderstats ──────────────────────────────────
+
+#[test]
+fn p1_create_leaderstats() {
+    let src = r#"
+local function setupLeaderstats(player) {
+    local leaderstats = Instance.new("Folder", player)
+    leaderstats.Name = "leaderstats"
+    local coins = Instance.new("IntValue", leaderstats)
+    coins.Name = "Coins"
+    coins.Value = 0
+    local level = Instance.new("IntValue", leaderstats)
+    level.Name = "Level"
+    level.Value = 1
+}
+"#;
+    let r = transpile(src, "p1.wrm").unwrap();
+    assert!(r.contains("local leaderstats = Instance.new(\"Folder\", player)"));
+    assert!(r.contains("leaderstats.Name = \"leaderstats\""));
+    assert!(r.contains("local coins = Instance.new(\"IntValue\", leaderstats)"));
+}
+
+#[test]
+fn p2_leaderboard_sort_and_display() {
+    let src = r#"
+local function updateLeaderboard() {
+    local sorted = {}
+    for player in Players:GetPlayers() {
+        local entry = {
+            name: player.Name,
+            coins: player.leaderstats.Coins.Value,
+        }
+        sorted[sorted.length + 1] = entry
+    }
+    // Sort by coins descending
+    for i in range(0, sorted.length) {
+        for j in range(i + 1, sorted.length) {
+            if (sorted[i].coins < sorted[j].coins) {
+                local temp = sorted[i]
+                sorted[i] = sorted[j]
+                sorted[j] = temp
+            }
+        }
+    }
+}
+"#;
+    let r = transpile(src, "p2.wrm").unwrap();
+    assert!(r.contains("#sorted"));
+    assert!(r.contains("leaderstats.Coins.Value"));
+}
+
+#[test]
+fn p3_killstreak_tracker() {
+    let src = r#"
+local function onPlayerDeath(victim, killer) {
+    if (killer and killer ~= victim) {
+        local ks = killer:FindFirstChild("Killstreak")
+        if (ks == nil) {
+            ks = Instance.new("IntValue", killer)
+            ks.Name = "Killstreak"
+        }
+        ks.Value = ks.Value + 1
+        local msg = f"{killer.Name} 🔥 {ks.Value} kill streak!"
+        for player in Players:GetPlayers() {
+            player:SendNotification(msg)
+        }
+    }
+}
+"#;
+    let r = transpile(src, "p3.wrm").unwrap();
+    assert!(r.contains("killer ~= victim"));
+    assert!(r.contains("killer:FindFirstChild"));
+    assert!(r.contains("`"));  // f-string → backtick template
+    assert!(r.contains("killer.Name"));
+}
+
+// ─── Q: NPC / AI Patterns ──────────────────────────────────────────
+
+#[test]
+fn q1_npc_roam_behavior() {
+    let src = r#"
+class NPC {
+    local waypoints = []
+    local currentIndex = 0
+    local humanoid = nil
+    public function init(model, points) {
+        humanoid = model:FindFirstChild("Humanoid")
+        waypoints = points
+    }
+    public function patrol() {
+        while (true) {
+            local target = waypoints[currentIndex % waypoints.length]
+            humanoid:MoveTo(target.Position)
+            humanoid.MoveToFinished:Wait()
+            task.wait(1)
+            currentIndex = currentIndex + 1
+        }
+    }
+}
+"#;
+    let r = transpile(src, "q1.wrm").unwrap();
+    assert!(r.contains("humanoid:MoveTo("));
+    assert!(r.contains("MoveToFinished:Wait()"));
+    assert!(r.contains("#waypoints"));
+}
+
+#[test]
+fn q2_enemy_detection_cone() {
+    let src = r#"
+local function isInCone(origin, lookDirection, target, angle) {
+    local toTarget = (target - origin).Unit
+    local dot = lookDirection:Dot(toTarget)
+    local threshold = math.cos(math.rad(angle / 2))
+    return dot >= threshold
+}
+local function detectPlayers(npc) {
+    local detected = []
+    for player in Players:GetPlayers() {
+        local char = player.Character
+        if (char and isInCone(npc.Head.Position, npc.Head.CFrame.LookVector, char.Head.Position, 60)) {
+            detected[detected.length + 1] = player
+        }
+    }
+    return detected
+}
+"#;
+    let r = transpile(src, "q2.wrm").unwrap();
+    assert!(r.contains("math.cos(math.rad("));
+    assert!(r.contains("LookVector"));
+    assert!(r.contains("Dot("));
+    assert!(r.contains("#detected"));
+}
+
+#[test]
+fn q3_npc_dialogue_tree() {
+    let src = r#"
+public class DialogueNode {
+    public function init(text) {
+        self.text = text
+        self.options = []
+    }
+    public function addOption(label, nextNode) {
+        local option = {label: label, next: nextNode}
+        self.options[self.options.length + 1] = option
+        return self
+    }
+    public function show(player) {
+        local gui = player.PlayerGui:FindFirstChild("DialogueGui")
+        if (gui == nil) {
+            gui = Instance.new("ScreenGui", player.PlayerGui)
+            gui.Name = "DialogueGui"
+        }
+        return gui
+    }
+}
+"#;
+    let r = transpile(src, "q3.wrm").unwrap();
+    assert!(r.contains("self.text = text"));
+    assert!(r.contains("self.options = {}"));
+    assert!(r.contains("player.PlayerGui:FindFirstChild"));
+}
+
+// ─── R: UI / GUI Patterns ──────────────────────────────────────────
+
+#[test]
+fn r1_shop_gui_builder() {
+    let src = r#"
+local function createShopButton(parent, item, position) {
+    local btn = Instance.new("TextButton", parent)
+    btn.Name = item.name
+    btn.Text = f"{item.name} — 💰{item.price}"
+    btn.Position = position
+    btn.Size = UDim2.new(0, 200, 0, 50)
+    btn.MouseButton1Click:Connect(function() {
+        buyItem(item)
+    })
+    return btn
+}
+"#;
+    let r = transpile(src, "r1.wrm").unwrap();
+    assert!(r.contains("TextButton"));
+    assert!(r.contains("MouseButton1Click:Connect"));
+    assert!(r.contains("UDim2.new(0, 200, 0, 50)"));
+    assert!(r.contains("`"));  // f-string → backtick template
+}
+
+#[test]
+fn r2_inventory_grid_layout() {
+    let src = r#"
+local function buildInventoryGrid(player, items) {
+    local gui = Instance.new("ScreenGui", player.PlayerGui)
+    local frame = Instance.new("Frame", gui)
+    frame.Size = UDim2.new(0, 400, 0, 300)
+    local slotSize = UDim2.new(0, 80, 0, 80)
+    local cols = 5
+    for i in range(0, items.length) {
+        local item = items[i]
+        local slot = Instance.new("ImageButton", frame)
+        local row = i / cols
+        local col = i % cols
+        slot.Position = UDim2.new(0, col * 80, 0, row * 80)
+        slot.Size = slotSize
+        if (item.icon) {
+            slot.Image = item.icon
+        }
+    }
+}
+"#;
+    let r = transpile(src, "r2.wrm").unwrap();
+    assert!(r.contains("#items"));
+    assert!(r.contains("row = i / cols"));
+    assert!(r.contains("col = i % cols"));
+    assert!(r.contains("ScreenGui"));
+}
+
+#[test]
+fn r3_notification_system() {
+    let src = r#"
+local function sendNotification(player, title, message, duration) {
+    local gui = Instance.new("ScreenGui", player.PlayerGui)
+    local frame = Instance.new("Frame", gui)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    frame.BorderSizePixel = 0
+    local titleLabel = Instance.new("TextLabel", frame)
+    titleLabel.Text = title
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.TextSize = 18
+    local msgLabel = Instance.new("TextLabel", frame)
+    msgLabel.Text = message
+    msgLabel.TextWrapped = true
+    task.wait(duration)
+    gui:Destroy()
+}
+"#;
+    let r = transpile(src, "r3.wrm").unwrap();
+    assert!(r.contains("Color3.fromRGB"));
+    assert!(r.contains("Enum.Font.GothamBold"));
+    assert!(r.contains("Destroy()"));
+}
+
+// ─── S: Advanced OOP Patterns ──────────────────────────────────────
+
+#[test]
+fn s1_class_inheritance_chain() {
+    let src = r#"
+class Weapon {
+    local damage = 10
+    local durability = 100
+    public function init(dmg) {
+        damage = dmg
+    }
+    public function attack(target) {
+        target:TakeDamage(damage)
+        durability = durability - 1
+    }
+    public function isBroken() {
+        return durability <= 0
+    }
+}
+class Sword {
+    local weapon = Weapon.new(25)
+    public function slash(target) {
+        weapon:attack(target)
+        print(f"Slashed for {weapon.damage}!") // Note: accessing .damage
+    }
+}
+"#;
+    let r = transpile(src, "s1.wrm").unwrap();
+    assert!(r.contains("target:TakeDamage(damage)"));
+    assert!(r.contains("durability <= 0"));
+}
+
+#[test]
+fn s2_builder_pattern() {
+    let src = r#"
+class House {
+    local walls = 0
+    local roof = false
+    local color = "white"
+    public function init() {}
+    public function setWalls(count) {
+        walls = count
+        return self
+    }
+    public function setRoof() {
+        roof = true
+        return self
+    }
+    public function setColor(c) {
+        color = c
+        return self
+    }
+    public function build() {
+        local part = Instance.new("Part", workspace)
+        part.BrickColor = BrickColor.new(color)
+        part.Size = Vector3.new(walls * 4, 3, walls * 4)
+    }
+}
+local mansion = House.new():setWalls(10):setRoof():setColor("Really red")
+"#;
+    let r = transpile(src, "s2.wrm").unwrap();
+    assert!(r.contains("return self"));
+    assert!(r.contains("BrickColor.new(color)"));
+    assert!(r.contains("House.new():setWalls(10):setRoof():setColor(\"Really red\")"));
+}
+
+#[test]
+fn s3_state_machine_pattern() {
+    let src = r#"
+enum States { Idle, Walking, Running, Jumping, Dead }
+class StateMachine {
+    local current = States.Idle
+    public function init() {}
+    public function transition(newState) {
+        if (current == States.Dead) { return }
+        self:exit(current)
+        current = newState
+        self:enter(current)
+    }
+    private function enter(state) {
+        print(f"Entering {state}")
+    }
+    private function exit(state) {
+        print(f"Exiting {state}")
+    }
+}
+"#;
+    let r = transpile(src, "s3.wrm").unwrap();
+    assert!(r.contains("current = States.Idle"));
+    assert!(r.contains("current == States.Dead"));
+    assert!(r.contains("__private_StateMachine[self].exit(self, current)"));
+}
+
+#[test]
+fn s4_singleton_service_class() {
+    let src = r#"
+public class AudioManager {
+    public function init() {}
+    public function playSound(soundId, volume) {
+        local sound = Instance.new("Sound", workspace)
+        sound.SoundId = f"rbxassetid://{soundId}"
+        sound.Volume = volume
+        sound:Play()
+    }
+    public function playBackgroundMusic(soundId) {
+        self:playSound(soundId, 0.5)
+    }
+}
+"#;
+    let r = transpile(src, "s4.wrm").unwrap();
+    assert!(r.contains("return module"));
+    assert!(r.contains("module.AudioManager = {}"));
+    assert!(r.contains("function module.AudioManager:playSound("));
+}
+
+// ─── T: Tool / Weapon Systems ──────────────────────────────────────
+
+#[test]
+fn t1_raycast_gun() {
+    let src = r#"
+local function shootGun(player, origin, direction) {
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.FilterDescendantsInstances = [player.Character]
+    local result = workspace:Raycast(origin, direction * 500, params)
+    if (result) {
+        local hit = result.Instance
+        local humanoid = hit.Parent:FindFirstChild("Humanoid")
+        if (humanoid) {
+            humanoid:TakeDamage(25)
+        }
+        local hitMarker = Instance.new("Part", workspace)
+        hitMarker.Position = result.Position
+        hitMarker.BrickColor = BrickColor.new("Really red")
+        task.wait(2)
+        hitMarker:Destroy()
+    }
+}
+"#;
+    let r = transpile(src, "t1.wrm").unwrap();
+    assert!(r.contains("RaycastParams.new()"));
+    assert!(r.contains("RaycastFilterType.Blacklist"));
+    assert!(r.contains("workspace:Raycast("));
+    assert!(r.contains("result.Instance"));
+}
+
+#[test]
+fn t2_projectile_motion() {
+    let src = r#"
+local function launchProjectile(start, target, speed) {
+    local direction = (target - start).Unit
+    local projectile = Instance.new("Part", workspace)
+    projectile.Position = start
+    projectile.Velocity = direction * speed
+    projectile.Touched:Connect(function(hit) {
+        if (hit.Parent:FindFirstChild("Humanoid")) {
+            projectile:Destroy()
+        }
+    })
+}
+"#;
+    let r = transpile(src, "t2.wrm").unwrap();
+    assert!(r.contains("(target - start).Unit"));
+    assert!(r.contains("direction * speed"));
+    assert!(r.contains("Touched:Connect"));
+}
+
+#[test]
+fn t3_aoe_damage_calculator() {
+    let src = r#"
+local function applyAoeDamage(center, radius, damage, source) {
+    local parts = workspace:GetPartBoundsInRadius(center, radius)
+    local hit = {}
+    for obj in parts {
+        local char = obj.Parent
+        if (char:FindFirstChild("Humanoid") and not hit[char]) {
+            hit[char] = true
+            local dist = (char:GetPivot().Position - center).Magnitude
+            local falloff = 1.0 - (dist / radius)
+            local dmg = damage * falloff
+            char.Humanoid:TakeDamage(dmg)
+        }
+    }
+}
+"#;
+    let r = transpile(src, "t3.wrm").unwrap();
+    assert!(r.contains("GetPartBoundsInRadius"));
+    assert!(r.contains("Magnitude"));
+    assert!(r.contains("falloff = "));
+    assert!(r.contains("not hit[char]"));
+}
+
+// ─── U: Realistic Error Handling ───────────────────────────────────
+
+#[test]
+fn u1_http_request_with_retry() {
+    let src = r#"
+local function fetchWithRetry(url, maxRetries) {
+    for attempt in range(0, maxRetries) {
+        try {
+            local response = HttpService:GetAsync(url)
+            return response
+        } catch {
+            warn(f"Attempt {attempt + 1} failed, retrying...")
+            task.wait(2 ^ attempt)
+        }
+    }
+    return nil
+}
+"#;
+    let r = transpile(src, "u1.wrm").unwrap();
+    assert!(r.contains("pcall("));
+    assert!(r.contains("if not ok then"));
+    assert!(r.contains("task.wait(2 ^ attempt)"));
+}
+
+#[test]
+fn u2_pcall_with_custom_error() {
+    let src = r#"
+local function safeDivide(a, b) {
+    if (b == 0) {
+        error("Division by zero")
+    }
+    return a / b
+}
+local function calculateRatio(x, y) {
+    try {
+        return safeDivide(x, y)
+    } catch e {
+        warn(f"Calculation failed: {e}")
+        return 0
+    }
+}
+"#;
+    let r = transpile(src, "u2.wrm").unwrap();
+    assert!(r.contains("error(\"Division by zero\")"));
+    assert!(r.contains("pcall("));
+}
+
+#[test]
+fn u3_require_with_fallback() {
+    let src = r#"
+local Logger
+try {
+    Logger = require(script.Parent.Shared.logger)
+} catch {
+    warn("Logger module not found, using default")
+    Logger = {log: function(msg) { print(msg) }}
+}
+Logger.log("System initialized")
+"#;
+    let r = transpile(src, "u3.wrm").unwrap();
+    assert!(r.contains("pcall("));
+    assert!(r.contains("Logger = require("));
+}
+
+// ─── V: List Comprehensions / Advanced Features ────────────────────
+
+#[test]
+fn v1_list_comp_filter_roblox_players() {
+    let src = r#"
+local function getAlivePlayers() {
+    return [p for p in Players:GetPlayers() if (p.Character and p.Character:FindFirstChild("Humanoid"))]
+}
+"#;
+    let r = transpile(src, "v1.wrm").unwrap();
+    assert!(r.contains("for _"));
+    assert!(r.contains("ipairs("));
+    assert!(r.contains("table.insert"));
+}
+
+#[test]
+fn v2_list_comp_map_items() {
+    let src = r#"
+local function getPlayerNames() {
+    return [p.Name for p in Players:GetPlayers() if (p.Name.length > 0)]
+}
+"#;
+    let r = transpile(src, "v2.wrm").unwrap();
+    assert!(r.contains("table.insert"));
+    assert!(r.contains("#p.Name"));
+}
+
+#[test]
+fn v3_ternary_in_game_logic() {
+    let src = r#"
+local function getPlayerTeamColor(team) {
+    return team == "Red" ? Color3.fromRGB(255, 50, 50) :
+           team == "Blue" ? Color3.fromRGB(50, 50, 255) :
+           Color3.fromRGB(150, 150, 150)
+}
+"#;
+    let r = transpile(src, "v3.wrm").unwrap();
+    assert!(r.contains("(if team == \"Red\" then Color3.fromRGB(255, 50, 50)"));
+    assert!(r.contains("(if team == \"Blue\" then Color3.fromRGB(50, 50, 255)"));
+}
+
+// ─── W: Async / Task Patterns ──────────────────────────────────────
+
+#[test]
+fn w1_parallel_task_loading() {
+    let src = r#"
+local function loadAssets() {
+    task.spawn(function() {
+        loadCharacterAssets()
+    })
+    task.spawn(function() {
+        loadMapAssets()
+    })
+    task.spawn(function() {
+        loadGuiAssets()
+    })
+    task.wait(5)
+    print("All assets loaded")
+}
+"#;
+    let r = transpile(src, "w1.wrm").unwrap();
+    assert!(r.contains("task.spawn(function()"));
+    assert!(r.contains("task.wait(5)"));
+}
+
+#[test]
+fn w2_countdown_timer_with_callback() {
+    let src = r#"
+local function startCountdown(seconds, onTick, onComplete) {
+    local remaining = seconds
+    while (remaining > 0) {
+        onTick(remaining)
+        task.wait(1)
+        remaining = remaining - 1
+    }
+    onComplete()
+}
+startCountdown(10,
+    function(s) { print(f"⏱️ {s}...") },
+    function() { print("GO! 🚀") }
+)
+"#;
+    let r = transpile(src, "w2.wrm").unwrap();
+    assert!(r.contains("local function startCountdown(seconds, onTick, onComplete)"));
+    assert!(r.contains("onTick(remaining)"));
+    assert!(r.contains("onComplete()"));
+}
+
+#[test]
+fn w3_coroutine_scheduler_sim() {
+    let src = r#"
+local function heartbeat(dt) {
+    for entity in activeEntities {
+        if (entity:isAlive()) {
+            entity:update(dt)
+        } else {
+            entity:destroy()
+        }
+    }
+}
+RunService.Heartbeat:Connect(heartbeat)
+"#;
+    let r = transpile(src, "w3.wrm").unwrap();
+    assert!(r.contains("RunService.Heartbeat:Connect(heartbeat)"));
+    assert!(r.contains("entity:update(dt)"));
+    assert!(r.contains("entity:destroy()"));
 }
