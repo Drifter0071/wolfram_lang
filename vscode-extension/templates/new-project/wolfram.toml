@@ -2,3 +2,20 @@
 "src/client" = "StarterPlayer.StarterPlayerScripts.Client"
 "src/server" = "ServerScriptService.Server"
 "src/shared" = "ReplicatedStorage.Shared"
+
+[lsp]
+diagnostic_level = "strict"
+enable_api_docs = true
+path_hints = true
+
+[test]
+strict = false
+check_dead_code = true
+check_unused_vars = true
+check_unused_imports = true
+check_api_conformance = true
+check_nil_safety = true
+
+[patterns]
+warn_on = [".length", "while true do"]
+require_import_as = true

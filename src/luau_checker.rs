@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::analyze::Diagnostic;
+use crate::api_db::ApiDatabase;
 use crate::ast::{Expr, Stmt, TableField};
 use crate::constants::{CLIENT_ONLY_SERVICES, ROBLOX_GLOBALS, SERVER_ONLY_SERVICES};
 use crate::roblox_api::RobloxApi;
@@ -69,7 +70,9 @@ pub struct LuauChecker {
     file_path: String,
     script_type: ScriptType,
     api: RobloxApi,
+    api_db: ApiDatabase,
     scope_vars: Vec<HashMap<String, bool>>,
+    scope_types: Vec<HashMap<String, String>>,
     check_roblox_api: bool,
     check_nil_safety: bool,
     check_patterns: bool,
@@ -79,6 +82,7 @@ pub struct LuauChecker {
 impl LuauChecker {
     pub fn check(stmts: &[Stmt], config: CheckConfig) -> ValidationResult {
         let api = RobloxApi::new();
+        let api_db = ApiDatabase::empty();
         let mut checker = LuauChecker {
             result: ValidationResult {
                 errors: Vec::new(),
@@ -88,7 +92,9 @@ impl LuauChecker {
             file_path: config.file_path,
             script_type: config.script_type,
             api,
+            api_db,
             scope_vars: vec![HashMap::new()],
+            scope_types: vec![HashMap::new()],
             check_roblox_api: config.check_roblox_api,
             check_nil_safety: config.check_nil_safety,
             check_patterns: config.check_patterns,
@@ -161,18 +167,39 @@ impl LuauChecker {
         }
     }
 
+    pub fn load_api_db(&mut self, db: ApiDatabase) {
+        self.api_db = db;
+    }
+
     fn push_scope(&mut self) {
         self.scope_vars.push(HashMap::new());
+        self.scope_types.push(HashMap::new());
     }
 
     fn pop_scope(&mut self) {
         self.scope_vars.pop();
+        self.scope_types.pop();
     }
 
     fn declare(&mut self, name: &str) {
         if let Some(s) = self.scope_vars.last_mut() {
             s.insert(name.to_string(), true);
         }
+    }
+
+    fn declare_type(&mut self, name: &str, type_name: &str) {
+        if let Some(s) = self.scope_types.last_mut() {
+            s.insert(name.to_string(), type_name.to_string());
+        }
+    }
+
+    fn lookup_type(&self, name: &str) -> Option<String> {
+        for s in self.scope_types.iter().rev() {
+            if let Some(t) = s.get(name) {
+                return Some(t.clone());
+            }
+        }
+        self.api_db.get_global_type(name)
     }
 
     fn is_declared(&self, name: &str) -> bool {
@@ -199,11 +226,13 @@ impl LuauChecker {
                 ..
             } => {
                 self.declare(name);
+                let inferred = value.as_ref().and_then(|v| self.infer_type(v));
+                if let Some(ref t) = inferred {
+                    self.declare_type(name, t);
+                }
                 if let Some(v) = value {
                     self.walk_expr_for_scope(v);
                 }
-                // Flag potential global — if value is assigned without 'local',
-                // the Assign handler catches it. For Local, no flag needed.
             }
             Stmt::Assign {
                 target,
@@ -213,7 +242,6 @@ impl LuauChecker {
             } => {
                 self.walk_expr_for_scope(target);
                 self.walk_expr_for_scope(value);
-                // Check if target is an identifier that hasn't been declared
                 if let Expr::Ident(name) = target {
                     if !self.is_declared(name) && !ROBLOX_GLOBALS.contains(&name.as_str()) {
                         let (line, col) = span_line_col(span, &self.source);
@@ -225,6 +253,10 @@ impl LuauChecker {
                                 name, name
                             ),
                         ));
+                    }
+                    let inferred = self.infer_type(value);
+                    if let Some(t) = inferred {
+                        self.declare_type(name, &t);
                     }
                 }
             }
@@ -267,6 +299,7 @@ impl LuauChecker {
             } => {
                 self.push_scope();
                 self.declare(var);
+                self.declare_type(var, "any");
                 self.walk_expr_for_scope(iter);
                 self.walk_stmts_for_scope(block);
                 self.pop_scope();
@@ -426,6 +459,59 @@ impl LuauChecker {
                     name
                 ),
             ));
+        }
+    }
+
+    fn infer_type(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Ident(name) => self.lookup_type(name),
+            Expr::MethodCall { obj, field, .. } => {
+                if field == "new" {
+                    if let Expr::Ident(class_name) = obj.as_ref() {
+                        return Some(class_name.clone());
+                    }
+                }
+                if field == "GetService" {
+                    return Some("Instance".into());
+                }
+                if let Expr::Member { obj: inner_obj, field: inner_field, .. } = obj.as_ref() {
+                    if let Expr::Ident(root) = inner_obj.as_ref() {
+                        if let Some(class_type) = self.lookup_type(root) {
+                            if let Some(ret) = self.api_db.method_returns(&class_type, inner_field) {
+                                if ret != "null" && !ret.is_empty() {
+                                    return Some(ret);
+                                }
+                            }
+                        }
+                    }
+                }
+                self.infer_type(obj)
+            }
+            Expr::Member { obj, field, .. } => {
+                if let Some(obj_type) = self.infer_type(obj) {
+                    self.api_db.property_type(&obj_type, field)
+                } else {
+                    None
+                }
+            }
+            Expr::Call { func, .. } => {
+                if let Some(g) = self.api_db.get_global(func) {
+                    return Some(g.r#type.clone());
+                }
+                if let Some(f) = self.api_db.get_function(func) {
+                    if !f.returns.is_empty() && f.returns != "null" {
+                        return Some(f.returns.clone());
+                    }
+                }
+                None
+            }
+            Expr::Str(_) => Some("string".into()),
+            Expr::Number(_) => Some("number".into()),
+            Expr::Bool(_) => Some("boolean".into()),
+            Expr::Nil => Some("nil".into()),
+            Expr::Array(_) => Some("table".into()),
+            Expr::Table(_) => Some("table".into()),
+            _ => None,
         }
     }
 
@@ -723,215 +809,146 @@ impl LuauChecker {
         if !self.check_roblox_api {
             return;
         }
-        self.check_property_method_existence(stmts);
+        if self.api_db.is_loaded() {
+            self.check_api_conformance(stmts);
+        }
         self.check_deprecated_globals(stmts);
         self.check_service_access(stmts);
     }
 
-    fn check_property_method_existence(&mut self, stmts: &[Stmt]) {
+    fn check_api_conformance(&mut self, stmts: &[Stmt]) {
         for stmt in stmts {
-            self.check_api_stmt(stmt, "stmt");
+            self.walk_api_conformance_stmt(stmt);
         }
     }
 
-    fn check_api_stmt(&mut self, stmt: &Stmt, context: &str) {
+    fn walk_api_conformance_stmt(&mut self, stmt: &Stmt) {
         match stmt {
-            Stmt::Local { value, .. } => {
-                if let Some(v) = value {
-                    self.check_api_expr(v, context);
-                }
-            }
+            Stmt::Local { value, .. } => { if let Some(v) = value { self.validate_api_expr(v); } }
             Stmt::Assign { target, value, .. } => {
-                self.check_api_expr(target, context);
-                self.check_api_expr(value, context);
+                self.validate_api_expr(target);
+                self.validate_api_expr(value);
             }
-            Stmt::Return { value, .. } => {
-                if let Some(v) = value {
-                    self.check_api_expr(v, context);
-                }
+            Stmt::Return { value, .. } => { if let Some(v) = value { self.validate_api_expr(v); } }
+            Stmt::If { cond, then_block, else_if_blocks, else_block, .. } => {
+                self.validate_api_expr(cond);
+                self.check_api_conformance(then_block);
+                for (c, b) in else_if_blocks { self.validate_api_expr(c); self.check_api_conformance(b); }
+                if let Some(b) = else_block { self.check_api_conformance(b); }
             }
-            Stmt::If {
-                cond,
-                then_block,
-                else_if_blocks,
-                else_block,
-                ..
-            } => {
-                self.check_api_expr(cond, context);
-                for b in then_block {
-                    self.check_api_stmt(b, context);
-                }
-                for (c, b) in else_if_blocks {
-                    self.check_api_expr(c, context);
-                    for s in b {
-                        self.check_api_stmt(s, context);
-                    }
-                }
-                if let Some(b) = else_block {
-                    for s in b {
-                        self.check_api_stmt(s, context);
-                    }
-                }
+            Stmt::While { cond, block, .. } => { self.validate_api_expr(cond); self.check_api_conformance(block); }
+            Stmt::For { iter, block, .. } => { self.validate_api_expr(iter); self.check_api_conformance(block); }
+            Stmt::FuncDef { block, .. } => { self.check_api_conformance(block); }
+            Stmt::ClassDef { body, .. } => { self.check_api_conformance(body); }
+            Stmt::ExprStmt { expr, .. } => { self.validate_api_expr(expr); }
+            Stmt::TryCatch { try_block, catch_clauses, finally_block, .. } => {
+                self.check_api_conformance(try_block);
+                for (_, _, b) in catch_clauses { self.check_api_conformance(b); }
+                if let Some(b) = finally_block { self.check_api_conformance(b); }
             }
-            Stmt::While { cond, block, .. } => {
-                self.check_api_expr(cond, context);
-                for b in block {
-                    self.check_api_stmt(b, context);
-                }
-            }
-            Stmt::For { iter, block, .. } => {
-                self.check_api_expr(iter, context);
-                for b in block {
-                    self.check_api_stmt(b, context);
-                }
-            }
-            Stmt::FuncDef { block, .. } => {
-                for b in block {
-                    self.check_api_stmt(b, context);
-                }
-            }
-            Stmt::ClassDef { body, .. } => {
-                for b in body {
-                    self.check_api_stmt(b, context);
-                }
-            }
-            Stmt::ExprStmt { expr, .. } => {
-                self.check_api_expr(expr, context);
-            }
-            Stmt::TryCatch {
-                try_block,
-                catch_clauses,
-                finally_block,
-                ..
-            } => {
-                for b in try_block {
-                    self.check_api_stmt(b, context);
-                }
-                for (_, _, b) in catch_clauses {
-                    for s in b {
-                        self.check_api_stmt(s, context);
-                    }
-                }
-                if let Some(b) = finally_block {
-                    for s in b {
-                        self.check_api_stmt(s, context);
-                    }
-                }
-            }
-            Stmt::DecoratedStmt { stmt: inner, .. } => self.check_api_stmt(inner, context),
+            Stmt::DecoratedStmt { stmt: inner, .. } => self.walk_api_conformance_stmt(inner),
             _ => {}
         }
     }
 
-    fn check_api_expr(&mut self, expr: &Expr, _context: &str) {
+    fn validate_api_expr(&mut self, expr: &Expr) {
         match expr {
-            Expr::Member {
-                obj,
-                field: _,
-                is_colon,
-            } => {
+            Expr::Member { obj, field, is_colon } => {
                 if !is_colon {
-                    // Property access: obj.property
-                    // Type of obj → check if property exists on that class
-                    // For now, we only check known patterns
-                }
-                self.check_api_expr(obj, "member-base");
-            }
-            Expr::MethodCall {
-                obj,
-                field,
-                args,
-                is_colon,
-            } => {
-                self.check_api_expr(obj, "method-call-base");
-                for a in args {
-                    self.check_api_expr(a, "method-arg");
-                }
-                let _ = (field, is_colon);
-            }
-            Expr::Call { func, args } => {
-                // Check for deprecated function calls
-                if let Some(replacement) = self.api.get_deprecation(func) {
-                    if replacement.is_empty() {
-                        self.result.warnings.push(warning_d(
-                            0,
-                            0,
-                            format!(
-                                "'{}()' is deprecated and may be removed in future Roblox versions",
-                                func
-                            ),
-                        ));
-                    } else {
-                        self.result.warnings.push(warning_d(
-                            0,
-                            0,
-                            format!("'{}()' is deprecated — use '{}' instead", func, replacement),
-                        ));
+                    // Validate property: obj.Property
+                    if let Some(obj_type) = self.infer_type(obj) {
+                        if self.api_db.is_known_class(&obj_type) && !self.api_db.property_exists(&obj_type, field) {
+                            self.result.warnings.push(warning_d(0, 0,
+                                format!("property '{}' does not exist on type '{}'", field, obj_type)));
+                        }
                     }
                 }
-                // Check context-aware service access
-                self.check_bare_service_access(func);
-                for a in args {
-                    self.check_api_expr(a, "call-arg");
+                self.validate_api_expr(obj);
+            }
+            Expr::MethodCall { obj, field, args, is_colon } => {
+                // Validate method: obj:Method(args) or obj.Method(args)
+                if let Some(obj_type) = self.infer_type(obj) {
+                    let method_lower = field.to_lowercase();
+                    if self.api_db.is_known_class(&obj_type) {
+                        if let Some(method) = self.api_db.method_info(&obj_type, field) {
+                            // Check parameter count (skip self for colon calls)
+                            let expected = if *is_colon && !method.params.is_empty() {
+                                method.params.len() - 1
+                            } else {
+                                method.params.len()
+                            };
+                            if args.len() < expected {
+                                let (min_params, max_params) = self.count_min_max_params(&method.params, *is_colon);
+                                let range = if min_params == max_params {
+                                    format!("{}", min_params)
+                                } else {
+                                    format!("{}-{}", min_params, max_params)
+                                };
+                                self.result.warnings.push(warning_d(0, 0,
+                                    format!("'{}.{}()' expects {} argument(s), got {}",
+                                        obj_type, field, range, args.len())));
+                            }
+                        } else if !["connect", "disconnect", "wait"].contains(&method_lower.as_str()) {
+                            self.result.warnings.push(warning_d(0, 0,
+                                format!("method '{}' does not exist on type '{}'", field, obj_type)));
+                        }
+                    }
                 }
+                self.validate_api_expr(obj);
+                for a in args { self.validate_api_expr(a); }
             }
-            Expr::Binary { left, right, .. } => {
-                self.check_api_expr(left, "binary-left");
-                self.check_api_expr(right, "binary-right");
-            }
-            Expr::Logical { left, right, .. } => {
-                self.check_api_expr(left, "logical-left");
-                self.check_api_expr(right, "logical-right");
-            }
-            Expr::Ternary {
-                cond,
-                then_expr,
-                else_expr,
-            } => {
-                self.check_api_expr(cond, "ternary-cond");
-                self.check_api_expr(then_expr, "ternary-then");
-                self.check_api_expr(else_expr, "ternary-else");
-            }
-            Expr::UnaryMinus(e) => self.check_api_expr(e, "unary-minus"),
-            Expr::Not(e) => self.check_api_expr(e, "not"),
-            Expr::Grouping(e) => self.check_api_expr(e, "group"),
-            Expr::Array(elements) => {
-                for e in elements {
-                    self.check_api_expr(e, "array-elem");
+            Expr::Call { func, args } => {
+                // Check function signature
+                if let Some(f) = self.api_db.get_function(func) {
+                    if args.len() < f.params.len() {
+                        self.result.warnings.push(warning_d(0, 0,
+                            format!("'{}(...)' expects {} argument(s), got {}", func, f.params.len(), args.len())));
+                    }
                 }
+                for a in args { self.validate_api_expr(a); }
             }
+            Expr::Binary { left, right, .. } => { self.validate_api_expr(left); self.validate_api_expr(right); }
+            Expr::Logical { left, right, .. } => { self.validate_api_expr(left); self.validate_api_expr(right); }
+            Expr::Ternary { cond, then_expr, else_expr } => {
+                self.validate_api_expr(cond);
+                self.validate_api_expr(then_expr);
+                self.validate_api_expr(else_expr);
+            }
+            Expr::UnaryMinus(e) | Expr::Not(e) | Expr::Grouping(e) => self.validate_api_expr(e),
+            Expr::Index { obj, index } => { self.validate_api_expr(obj); self.validate_api_expr(index); }
+            Expr::AwaitExpr(e) => self.validate_api_expr(e),
+            Expr::Array(elements) => { for e in elements { self.validate_api_expr(e); } }
             Expr::Table(fields) => {
                 for f in fields {
                     match f {
-                        TableField::Pair { key, value } => {
-                            self.check_api_expr(key, "table-key");
-                            self.check_api_expr(value, "table-value");
-                        }
-                        TableField::Value(v) => self.check_api_expr(v, "table-value"),
+                        TableField::Pair { key, value } => { self.validate_api_expr(key); self.validate_api_expr(value); }
+                        TableField::Value(v) => self.validate_api_expr(v),
                     }
                 }
             }
-            Expr::Index { obj, index } => {
-                self.check_api_expr(obj, "index-obj");
-                self.check_api_expr(index, "index-key");
-            }
-            Expr::AwaitExpr(e) => self.check_api_expr(e, "await"),
-            Expr::Function { block, .. } => {
-                for b in block {
-                    self.check_api_stmt(b, "fn-body");
-                }
-            }
+            Expr::Function { block, .. } => { self.check_api_conformance(block); }
             Expr::ListComp { elt, generators } => {
-                self.check_api_expr(elt, "list-comp-elt");
+                self.validate_api_expr(elt);
                 for gen in generators {
-                    self.check_api_expr(&gen.iter, "list-comp-iter");
-                    if let Some(ref cond) = gen.condition {
-                        self.check_api_expr(cond, "list-comp-cond");
-                    }
+                    self.validate_api_expr(&gen.iter);
+                    if let Some(ref cond) = gen.condition { self.validate_api_expr(cond); }
                 }
             }
             _ => {}
         }
+    }
+
+    fn count_min_max_params(&self, params: &[crate::api_db::WoldParam], is_colon: bool) -> (usize, usize) {
+        let base = if is_colon { 1 } else { 0 };
+        let mut required = 0;
+        let total = params.len();
+        for p in params.iter().skip(base) {
+            if !p.r#type.contains('?') {
+                required += 1;
+            }
+        }
+        let max = total.saturating_sub(base);
+        (required, max)
     }
 
     fn check_bare_service_access(&self, name: &str) {

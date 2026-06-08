@@ -2,6 +2,12 @@ use crate::constants::normalize_path;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+fn strip_module_suffixes(raw: &str) -> String {
+    let without_ext = raw.strip_suffix(".wrm").unwrap_or(raw);
+    let without_shared = without_ext.strip_suffix(".shared").or_else(|| without_ext.strip_suffix(".server")).or_else(|| without_ext.strip_suffix(".client")).unwrap_or(without_ext);
+    without_shared.to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WolframConfig {
     #[serde(default)]
@@ -97,13 +103,10 @@ pub fn resolve_script_location(
             || normalized.starts_with(&prefix)
         {
             let rel = normalized[dep.source_dir.len()..].trim_start_matches('/');
-            let name = rel
+            let name = strip_module_suffixes(rel
                 .rsplit('/')
                 .next()
-                .unwrap_or(rel)
-                .strip_suffix(".wrm")
-                .unwrap_or(rel)
-                .to_string();
+                .unwrap_or(rel));
 
             let mut extra_segments: Vec<String> = if let Some(slash) = rel.rfind('/') {
                 rel[..slash]

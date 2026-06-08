@@ -285,5 +285,6 @@ pub fn print_usage() {
     println!("  wolfram <project_dir/>          Transpile all .wrm        → out/**/**.luau");
     println!("  wolfram --watch <dir>           Watch dir for .wrm changes, auto-transpile");
     println!("  wolfram --analyze <file>        Output JSON AST + diagnostics to stdout");
+    println!("  wolfram --test <file>           Run edge-case tests on a .wrm file");
     println!("  wolfram lsp                      Start language server for VS Code");
 }

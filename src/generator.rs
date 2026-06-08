@@ -610,9 +610,14 @@ fn generate_safe_member_chain(expr: &Expr, ctx: &GenContext) -> String {
                 is_colon,
             } => {
                 let (mut parts, root) = collect_member_parts(obj, ctx);
-                let sep = if *is_colon { ":" } else { "." };
-                let last = parts.last().unwrap().clone();
-                parts.push(format!("{}{}{}", last, sep, field));
+                if field == "length" && !is_colon {
+                    let last_idx = parts.len() - 1;
+                    parts[last_idx] = format!("#{}", parts[last_idx]);
+                } else {
+                    let sep = if *is_colon { ":" } else { "." };
+                    let last = parts.last().unwrap().clone();
+                    parts.push(format!("{}{}{}", last, sep, field));
+                }
                 (parts, root)
             }
             _ => {
@@ -672,6 +677,9 @@ fn generate_expr_impl(expr: &Expr, ctx: &GenContext, safe_chain: bool) -> String
             format!("{}[{}]", generate_expr(obj, ctx), generate_expr(index, ctx))
         }
         Expr::Call { func, args } => {
+            if func == "len" && args.len() == 1 {
+                return format!("#{}", generate_expr(&args[0], ctx));
+            }
             let arg_strs: Vec<String> = args.iter().map(|a| generate_expr(a, ctx)).collect();
             format!("{}({})", func, arg_strs.join(", "))
         }

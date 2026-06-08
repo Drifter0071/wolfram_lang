@@ -3,6 +3,12 @@ use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
+fn strip_module_suffixes(raw: &str) -> String {
+    let without_ext = raw.strip_suffix(".wrm").unwrap_or(raw);
+    let cleaned = without_ext.strip_suffix(".shared").or_else(|| without_ext.strip_suffix(".server")).or_else(|| without_ext.strip_suffix(".client")).unwrap_or(without_ext);
+    cleaned.to_string()
+}
+
 #[derive(Debug, Deserialize)]
 struct RojoProject {
     #[allow(dead_code)]
@@ -245,13 +251,13 @@ impl RojoPathMapping {
 
         match (current_mapping, import_mapping) {
             (Some(current), Some(import)) => {
-                let module_name = resolved
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(&resolved)
-                    .strip_suffix(".wrm")
-                    .unwrap_or(&resolved)
-                    .replace('.', "_");
+                let module_name = {
+                    let raw = resolved
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(&resolved);
+                    strip_module_suffixes(raw).replace('.', "_")
+                };
 
                 if current.service == import.service
                     && current.instance_path == import.instance_path.split('.').next().unwrap_or("")
@@ -267,13 +273,13 @@ impl RojoPathMapping {
                 }
             }
             (None, Some(import)) => {
-                let module_name = resolved
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(&resolved)
-                    .strip_suffix(".wrm")
-                    .unwrap_or(&resolved)
-                    .replace('.', "_");
+                let module_name = {
+                    let raw = resolved
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(&resolved);
+                    strip_module_suffixes(raw).replace('.', "_")
+                };
                 let path = format!("{}.{}", import.instance_path, module_name);
                 Some((path, import.service.clone()))
             }
