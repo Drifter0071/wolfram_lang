@@ -665,6 +665,14 @@ fn is_simple_chain_root(expr: &Expr) -> bool {
     matches!(expr, Expr::Ident(_) | Expr::SelfExpr | Expr::Member { .. })
 }
 
+fn chain_root_is_self(expr: &Expr) -> bool {
+    match expr {
+        Expr::SelfExpr => true,
+        Expr::Member { obj, .. } => chain_root_is_self(obj),
+        _ => false,
+    }
+}
+
 fn generate_safe_member_chain(expr: &Expr, ctx: &GenContext) -> String {
     fn collect_member_parts(expr: &Expr, ctx: &GenContext) -> (Vec<String>, String) {
         match expr {
@@ -865,7 +873,7 @@ fn generate_expr_impl(expr: &Expr, ctx: &GenContext, safe_chain: bool) -> String
                     );
                 }
             }
-            if safe_chain && matches!(&**obj, Expr::Member { .. }) && is_simple_chain_root(obj) {
+            if safe_chain && matches!(&**obj, Expr::Member { .. }) && is_simple_chain_root(obj) && !chain_root_is_self(obj) {
                 return generate_safe_member_chain(expr, ctx);
             }
             let sep = if *is_colon { ":" } else { "." };
