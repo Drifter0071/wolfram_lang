@@ -1174,7 +1174,7 @@ impl LuauChecker {
 
     fn check_module_script_return(&mut self, stmts: &[Stmt]) {
         // ModuleScript should return a value (table or other export)
-        if self.script_type == ScriptType::Shared {
+        if self.script_type == ScriptType::Module {
             let has_return = stmts.iter().any(|s| matches!(s, Stmt::Return { .. }));
             let has_public_exports = stmts.iter().any(|s| match s {
                 Stmt::ClassDef { access, .. }

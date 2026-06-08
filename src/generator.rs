@@ -736,6 +736,17 @@ fn generate_expr_impl(expr: &Expr, ctx: &GenContext, safe_chain: bool) -> String
         Expr::Bool(b) => b.to_string(),
         Expr::Nil => "nil".into(),
         Expr::Ident(name) => {
+            // 1. Check local scope first — lexical shadowing takes precedence
+            if ctx.lookup_var(name) != InferredType::Unknown {
+                return name.clone();
+            }
+            // 2. Resolve private class members to shadow-table access
+            if let Some(class_name) = &ctx.class_name {
+                if ctx.private_vars.contains(name) || ctx.private_methods.contains(name) {
+                    return format!("__private_{}[self].{}", class_name, name);
+                }
+            }
+            // 3. Module exports get prefixed
             if ctx.module_exports.contains(name) {
                 if let Some(ref prefix) = ctx.module_prefix {
                     return format!("{}.{}", prefix, name);
@@ -970,20 +981,18 @@ pub fn generate(
     out_dir: &str,
 ) -> String {
     let mut module_exports: HashSet<String> = HashSet::new();
-    if !roblox_mode {
-        for stmt in ast {
-            match stmt {
-                Stmt::ClassDef { name, access, .. } if access == "public" => { module_exports.insert(name.clone()); }
-                Stmt::EnumDef { name, access, .. } if access == "public" => { module_exports.insert(name.clone()); }
-                Stmt::StructDef { name, access, .. } if access == "public" => { module_exports.insert(name.clone()); }
-                Stmt::FuncDef { name, access, .. } if access == "public" => { module_exports.insert(name.clone()); }
-                Stmt::Local { name, access, .. } if access == "public" => { module_exports.insert(name.clone()); }
-                _ => {}
-            }
+    for stmt in ast {
+        match stmt {
+            Stmt::ClassDef { name, access, .. } if access == "public" => { module_exports.insert(name.clone()); }
+            Stmt::EnumDef { name, access, .. } if access == "public" => { module_exports.insert(name.clone()); }
+            Stmt::StructDef { name, access, .. } if access == "public" => { module_exports.insert(name.clone()); }
+            Stmt::FuncDef { name, access, .. } if access == "public" => { module_exports.insert(name.clone()); }
+            Stmt::Local { name, access, .. } if access == "public" => { module_exports.insert(name.clone()); }
+            _ => {}
         }
     }
 
-    let module_prefix = if !roblox_mode && !module_exports.is_empty() {
+    let module_prefix = if !module_exports.is_empty() {
         Some("module".to_string())
     } else {
         None
@@ -1050,6 +1059,9 @@ pub fn generate(
     }
 
     if roblox_mode {
+        if !global_ctx.module_exports.is_empty() {
+            output.push_str("\nreturn module\n");
+        }
         return output;
     }
 

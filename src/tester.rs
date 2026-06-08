@@ -29,7 +29,7 @@ impl Default for TestConfig {
             check_api_conformance: true,
             check_nil_safety: true,
             api_db_path: None,
-            script_type: ScriptType::Shared,
+            script_type: ScriptType::Module,
         }
     }
 }

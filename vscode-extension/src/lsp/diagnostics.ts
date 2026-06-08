@@ -4,7 +4,7 @@ import { Stmt } from "./ast";
 
 const DECL_KEYWORD_RE = /\b(local|function|class|struct|enum|import|as|for)\s*$/;
 
-export function computeDiagnostics(source: string): Diagnostic[] {
+export function computeDiagnostics(source: string, filePath?: string): Diagnostic[] {
     const diags: Diagnostic[] = [];
 
     const result = parseSource(source);
@@ -30,6 +30,11 @@ export function computeDiagnostics(source: string): Diagnostic[] {
                 source: "wolfram-parse",
             });
         }
+    }
+
+    // Script-type files (.client.wrm / .server.wrm) should not use public declarations
+    if (filePath) {
+        checkPublicInScript(source, filePath, result.ast, diags);
     }
 
     // Scope analysis — AST-driven (replaces regex-based scan)
@@ -218,6 +223,65 @@ function isTableFieldKey(source: string, offset: number, name: string): boolean 
     const before = source.substring(0, offset);
     const prevNonSpace = before.match(/[{,]\s*$/);
     return prevNonSpace !== null;
+}
+
+/**
+ * Warn when `public` declarations appear in .client.wrm or .server.wrm files.
+ * Script files don't produce a module return table, so public exports are ignored.
+ */
+function checkPublicInScript(
+    source: string,
+    filePath: string,
+    ast: Stmt[],
+    diags: Diagnostic[]
+): void {
+    const lower = filePath.toLowerCase();
+    if (!lower.includes(".client.") && !lower.endsWith(".client")
+        && !lower.includes(".server.") && !lower.endsWith(".server")) {
+        return; // Module file — ok
+    }
+
+    const scriptType = lower.includes(".client.") || lower.endsWith(".client") ? "client" : "server";
+
+    const publicStmts = findPublicDeclarations(ast);
+    if (publicStmts.length === 0) return;
+
+    const firstLine = publicStmts[0];
+    diags.push({
+        range: {
+            start: { line: firstLine.line, character: 0 },
+            end: { line: firstLine.line, character: 6 },
+        },
+        severity: DiagnosticSeverity.Warning,
+        message: `Public declarations in .${scriptType}.wrm files have no effect — scripts don't export a module table. Use a module file (no suffix) for shared code, or remove 'public'.`,
+        source: "wolfram-script-type",
+    });
+}
+
+/**
+ * Find all AST statements with `access === "public"`.
+ */
+function findPublicDeclarations(stmts: Stmt[]): { line: number }[] {
+    const result: { line: number }[] = [];
+    for (const s of stmts) {
+        if ("access" in s && (s as any).access === "public") {
+            result.push({ line: ((s as any).span?.start ?? 0) });
+        }
+        switch (s.kind) {
+            case "ClassDef":
+                findPublicDeclarations(s.body).forEach(r => { r.line = Math.max(r.line, 0); result.push(r); });
+                break;
+            case "FuncDef":
+                findPublicDeclarations(s.block).forEach(r => { r.line = Math.max(r.line, 0); result.push(r); });
+                break;
+            case "If":
+                findPublicDeclarations(s.thenBlock);
+                for (const [, b] of s.elseIfBlocks) findPublicDeclarations(b);
+                if (s.elseBlock) findPublicDeclarations(s.elseBlock);
+                break;
+        }
+    }
+    return result;
 }
 
 function extractLineCol(msg: string): { line: number; column: number } | null {

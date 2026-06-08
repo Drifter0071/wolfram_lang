@@ -13,3 +13,4 @@ public class Logger {
         print(f"📢  {msg.player}> {msg.text}")
     }
 }
+

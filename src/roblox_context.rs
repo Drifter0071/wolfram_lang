@@ -4,7 +4,7 @@ use crate::constants::{CLIENT_ONLY_SERVICES, SERVER_ONLY_SERVICES};
 pub enum ScriptType {
     Server,
     Client,
-    Shared,
+    Module,
 }
 
 impl ScriptType {
@@ -15,7 +15,7 @@ impl ScriptType {
         } else if lower.contains(".client.") || lower.ends_with(".client") {
             ScriptType::Client
         } else {
-            ScriptType::Shared
+            ScriptType::Module
         }
     }
 
@@ -23,7 +23,7 @@ impl ScriptType {
         match self {
             ScriptType::Server => "ServerScript",
             ScriptType::Client => "LocalScript",
-            ScriptType::Shared => "ModuleScript",
+            ScriptType::Module => "ModuleScript",
         }
     }
 }
@@ -54,6 +54,6 @@ pub fn check_api_access(script_type: ScriptType, service_name: &str) -> Option<S
                 None
             }
         }
-        ScriptType::Shared => None,
+        ScriptType::Module => None,
     }
 }

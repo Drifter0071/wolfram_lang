@@ -39,6 +39,7 @@ import { computeWorkspaceSymbols } from "./workspaceSymbols";
 import { collectProjectWrmFiles, extractWordAround } from "./utils";
 import * as path from "path";
 import * as fs from "fs";
+import { fileURLToPath, pathToFileURL } from "url";
 
 const connection = createConnection(ProposedFeatures.all);
 const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
@@ -111,6 +112,15 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
     };
 });
 
+function uriToPath(uri: string): string {
+    try {
+        return fileURLToPath(uri);
+    } catch {
+        // Fallback for Windows paths
+        return uri.replace(/^file:\/\/\//, "").replace(/\//g, path.sep);
+    }
+}
+
 function findBindingsDir(): string {
     if (workspaceRoot) {
         const local = path.join(workspaceRoot, "generated", "roblox.wold");
@@ -127,13 +137,15 @@ function findBindingsDir(): string {
 // ==========================================
 documents.onDidOpen((open) => {
     store.open(open.document.uri, open.document.getText());
-    const diags = computeDiagnostics(open.document.getText());
+    const filePath = uriToPath(open.document.uri);
+    const diags = computeDiagnostics(open.document.getText(), filePath);
     connection.sendDiagnostics({ uri: open.document.uri, diagnostics: diags });
 });
 
 documents.onDidChangeContent((change) => {
     store.update(change.document.uri, change.document.getText());
-    const diags = computeDiagnostics(change.document.getText());
+    const filePath = uriToPath(change.document.uri);
+    const diags = computeDiagnostics(change.document.getText(), filePath);
     connection.sendDiagnostics({ uri: change.document.uri, diagnostics: diags });
 });
 

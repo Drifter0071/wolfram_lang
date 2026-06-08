@@ -1067,7 +1067,7 @@ local function updateLeaderboard() {
         }
         sorted[sorted.length + 1] = entry
     }
-    // Sort by coins descending
+    -- Sort by coins descending
     for i in range(0, sorted.length) {
         for j in range(i + 1, sorted.length) {
             if (sorted[i].coins < sorted[j].coins) {
@@ -1136,7 +1136,7 @@ class NPC {
     let r = transpile(src, "q1.wrm").unwrap();
     assert!(r.contains("humanoid:MoveTo("));
     assert!(r.contains("MoveToFinished:Wait()"));
-    assert!(r.contains("#waypoints"));
+    assert!(r.contains("__private_NPC[self].waypoints"));
 }
 
 #[test]
@@ -1296,12 +1296,13 @@ class Sword {
     local weapon = Weapon.new(25)
     public function slash(target) {
         weapon:attack(target)
-        print(f"Slashed for {weapon.damage}!") // Note: accessing .damage
+        print(f"Slashed for {weapon.damage}!")
     }
 }
 "#;
     let r = transpile(src, "s1.wrm").unwrap();
-    assert!(r.contains("target:TakeDamage(damage)"));
+    assert!(r.contains("target:TakeDamage("));
+    assert!(r.contains("__private_Weapon[self].damage"));
     assert!(r.contains("durability <= 0"));
 }
 
@@ -1335,7 +1336,8 @@ local mansion = House.new():setWalls(10):setRoof():setColor("Really red")
 "#;
     let r = transpile(src, "s2.wrm").unwrap();
     assert!(r.contains("return self"));
-    assert!(r.contains("BrickColor.new(color)"));
+    assert!(r.contains("BrickColor.new("));
+    assert!(r.contains("__private_House[self].color"));
     assert!(r.contains("House.new():setWalls(10):setRoof():setColor(\"Really red\")"));
 }
 
@@ -1363,7 +1365,9 @@ class StateMachine {
     let r = transpile(src, "s3.wrm").unwrap();
     assert!(r.contains("current = States.Idle"));
     assert!(r.contains("current == States.Dead"));
-    assert!(r.contains("__private_StateMachine[self].exit(self, current)"));
+    assert!(r.contains("__private_StateMachine[self].exit("));
+    assert!(r.contains("__private_StateMachine[self].enter("));
+    assert!(r.contains("__private_StateMachine[self].current"));
 }
 
 #[test]

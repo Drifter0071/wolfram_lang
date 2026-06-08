@@ -68,6 +68,23 @@ function resolveChainedType(prefix: string, bindings: Bindings, scope: Map<strin
     const parts = prefix.split(".");
     const root = parts[0];
 
+    const scopeVal = scope.get(root);
+    // Skip import module references — handled separately in DOT_COLON handler
+    if (scopeVal && scopeVal.startsWith("@import:")) {
+        if (parts.length === 1) return undefined;
+        // Resolve the import target to get type of second part
+        const modPath = scopeVal.substring("@import:".length);
+        const modSource = readModuleSource(modPath);
+        if (modSource) {
+            try {
+                const parsed = parseSource(modSource);
+                const memberSym = parsed.symbols.find(s => s.name === parts[1]);
+                if (memberSym) return memberSym.kind === "class" ? memberSym.name : undefined;
+            } catch {}
+        }
+        return undefined;
+    }
+
     const g = bindings.getGlobal(root);
     const rootType = g ? g.type : (scope.get(root) ?? undefined);
     if (!rootType) {
@@ -110,6 +127,14 @@ const STRUCT_KW = KEYWORDS.filter(k => ["if", "else", "elif", "while", "for", "f
 
 function buildEnrichedScope(source: string, bindings: Bindings): Map<string, string> {
     const scope = new Map<string, string>();
+
+    // Import aliases — parse source for imports
+    try {
+        const parsed = parseSource(source);
+        for (const imp of parsed.imports) {
+            scope.set(imp.alias, `@import:${imp.path}`);
+        }
+    } catch {}
 
     // local name = bindings.new(...)  /  local name = Type.new(...)
     const newRe = /local\s+(\w+)\s*=\s*(\w+(?:\.\w+)*)\.new\s*\(/g;
@@ -184,10 +209,57 @@ export function handleCompletion(
     // Dot/colon member access — uses type chaining
     if (ctx === Ctx.DOT_COLON) {
         const lastChar = linePrefix[linePrefix.length - 1] ?? "";
-        const expr = extractExprBeforeDot(document, line, character);
+        const exprStr = extractExprBeforeDot(document, line, character);
         const scope = buildEnrichedScope(document.getText(), bindings);
-        const typeName = resolveChainedType(expr, bindings, scope);
-        if (typeName) {
+
+        // Check if the root of the expression is an import alias
+        const rootPart = exprStr.split(".")[0];
+        const importPath = scope.get(rootPart);
+        if (importPath && importPath.startsWith("@import:")) {
+            const modPath = importPath.substring("@import:".length);
+            const ws = document.uri.replace(/^file:\/\/\/([a-zA-Z]:)/, "$1")
+                .replace(/^file:\/\//, "/").replace(/[/\\][^/\\]+$/, "");
+            const targetFile = resolveModulePath(ws, modPath);
+            if (targetFile) {
+                const parts = exprStr.split(".");
+                if (parts.length === 1) {
+                    // "Log." — suggest all public exports from module
+                    const exports = getModuleExports(targetFile, bindings, lastChar === ":");
+                    exports.forEach(push);
+                } else {
+                    // "Log.Something." or "Log.Something:" — resolve the type
+                    const memberName = parts[1];
+                    const typeName = getModuleMemberType(targetFile, memberName);
+                    if (typeName) {
+                        if (lastChar === ":") {
+                            for (const m of bindings.getAllMethods(typeName)) {
+                                const params = m.params.map(p => `${p.name}: ${p.type}`).join(", ");
+                                push({
+                                    label: m.name, kind: CompletionItemKind.Method,
+                                    detail: `(${params}): ${m.returns}`,
+                                    insertText: m.params.length > 0
+                                        ? `${m.name}(${m.params.map((p, i) => `\${${i + 1}:${p.name}}`).join(", ")})`
+                                        : `${m.name}()`,
+                                    insertTextFormat: m.params.length > 0 ? InsertTextFormat.Snippet : InsertTextFormat.PlainText,
+                                    sortText: "3" + m.name,
+                                });
+                            }
+                        } else {
+                            for (const p of bindings.getAllProperties(typeName)) {
+                                push({ label: p.name, kind: CompletionItemKind.Property, detail: `${p.type}${p.rw ? " (r/w)" : " (r)"}`, sortText: "3" + p.name });
+                            }
+                            for (const m of bindings.getAllMethods(typeName)) {
+                                push({ label: m.name, kind: CompletionItemKind.Method, detail: m.returns, sortText: "3" + m.name });
+                            }
+                        }
+                    }
+                }
+                return items;
+            }
+        }
+
+        const typeName = resolveChainedType(exprStr, bindings, scope);
+        if (typeName && !typeName.startsWith("@import:")) {
             if (lastChar === ":") {
                 for (const m of bindings.getAllMethods(typeName)) {
                     const params = m.params.map(p => `${p.name}: ${p.type}`).join(", ");
@@ -255,10 +327,7 @@ export function handleCompletion(
         }
     }
 
-    if (ctx === Ctx.VALUE_EXPRESSION || ctx === Ctx.EXPRESSION) {
-        for (const kw of VALUE_KW) {
-            if (kw.label.startsWith(wp)) push({ label: kw.label, kind: CompletionItemKind.Keyword, sortText: "0" + kw.label });
-        }
+    if (ctx === Ctx.VALUE_EXPRESSION || ctx === Ctx.EXPRESSION || ctx === Ctx.STATEMENT_START) {
         for (const [, g] of bindings.globals) {
             if (g.name.toLowerCase().startsWith(wp)) {
                 push({ label: g.name, kind: CompletionItemKind.Variable, detail: `${g.type} — ${g.description}`, sortText: "2" + g.name });
@@ -274,6 +343,22 @@ export function handleCompletion(
                     insertTextFormat: f.params.length > 0 ? InsertTextFormat.Snippet : InsertTextFormat.PlainText,
                     sortText: "2" + f.name,
                     documentation: f.description ? { kind: MarkupKind.Markdown, value: f.description } : undefined,
+                });
+            }
+        }
+        for (const [, t] of bindings.types) {
+            if (t.name.toLowerCase().startsWith(wp)) {
+                push({
+                    label: t.name, kind: CompletionItemKind.Class,
+                    detail: t.description || "Roblox type",
+                    sortText: "2" + t.name,
+                    documentation: t.methods.length > 0 ? {
+                        kind: MarkupKind.Markdown,
+                        value: `**${t.name}**\n\n${t.methods.map(m => {
+                            const params = m.params.map(p => `${p.name}: ${p.type}`).join(", ");
+                            return `- \`${m.name}(${params})${m.returns ? " → " + m.returns : ""}\``;
+                        }).join("\n")}`,
+                    } : undefined,
                 });
             }
         }
@@ -315,4 +400,54 @@ export function handleCompletion(
     }
 
     return items;
+}
+
+let moduleSourceCache: Map<string, string> | null = null;
+function readModuleSource(importPath: string): string | null {
+    return null; // Module source reading requires workspace root context
+}
+
+function resolveModulePath(workspaceRoot: string, importPath: string): string | null {
+    const fs = require("fs");
+    const path = require("path");
+    // Try extensions and suffixes
+    const exts = ["", ".wrm", ".server.wrm", ".client.wrm"];
+    for (const ext of exts) {
+        const full = path.resolve(workspaceRoot, "src", importPath + ext);
+        if (fs.existsSync(full)) return full;
+    }
+    return null;
+}
+
+function getModuleExports(modulePath: string, bindings: Bindings, colonOnly: boolean): CompletionItem[] {
+    const items: CompletionItem[] = [];
+    try {
+        const fs = require("fs");
+        const parsed = parseSource(fs.readFileSync(modulePath, "utf-8"));
+        for (const sym of parsed.symbols) {
+            if (colonOnly && sym.kind !== "function") continue;
+            items.push({
+                label: sym.name,
+                kind: sym.kind === "function" ? CompletionItemKind.Function :
+                    sym.kind === "class" ? CompletionItemKind.Class :
+                    sym.kind === "struct" ? CompletionItemKind.Struct :
+                    sym.kind === "enum" ? CompletionItemKind.Enum :
+                    CompletionItemKind.Variable,
+                detail: sym.kind + (sym.access === "public" ? " (public)" : ""),
+                sortText: "4" + sym.name,
+            });
+        }
+    } catch {}
+    return items;
+}
+
+function getModuleMemberType(modulePath: string, memberName: string): string | undefined {
+    try {
+        const fs = require("fs");
+        const parsed = parseSource(fs.readFileSync(modulePath, "utf-8"));
+        for (const sym of parsed.symbols) {
+            if (sym.name === memberName) return memberName;
+        }
+    } catch {}
+    return undefined;
 }
