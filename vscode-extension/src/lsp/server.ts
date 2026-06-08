@@ -353,40 +353,11 @@ connection.onCodeAction((params: CodeActionParams): CodeAction[] => {
 
     for (const diag of diagnostics) {
         const line = (doc.getText().split("\n")[diag.range.start.line] ?? "");
-        const col = diag.range.start.character;
         const msg = diag.message.toLowerCase();
-
-        // .length -> #
-        if (diag.message.includes(".length")) {
-            const word = extractWordAround(doc, diag.range.start.line, col);
-            const varName = word.replace(/\.length$/, "");
-            actions.push({
-                title: `Replace '.length' with '#${varName}'`,
-                kind: CodeActionKind.QuickFix,
-                diagnostics: [diag],
-                edit: { changes: { [params.textDocument.uri]: [{ range: diag.range, newText: `#${varName}` }] } },
-            });
-            continue;
-        }
-
-        // len() -> #
-        if (diag.message.includes("len(")) {
-            const endParen = line.indexOf(")", col);
-            if (endParen > col) {
-                const arg = line.substring(col + 4, endParen).trim();
-                actions.push({
-                    title: `Replace 'len(${arg})' with '#${arg}'`,
-                    kind: CodeActionKind.QuickFix,
-                    diagnostics: [diag],
-                    edit: { changes: { [params.textDocument.uri]: [{ range: { start: diag.range.start, end: { line: diag.range.start.line, character: endParen + 1 } }, newText: `#${arg}` }] } },
-                });
-            }
-            continue;
-        }
 
         // Undeclared variable
         if (msg.includes("undeclared variable") || msg.includes("undefined variable")) {
-            const word = extractWordAround(doc, diag.range.start.line, col);
+            const word = extractWordAround(doc, diag.range.start.line, diag.range.start.character);
             if (word) {
                 actions.push({
                     title: `Add 'local ${word}' declaration`,

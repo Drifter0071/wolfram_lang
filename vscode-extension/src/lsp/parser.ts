@@ -163,6 +163,14 @@ function tokenize(source: string): Token[] {
 // ==========================================
 // PARSER
 // ==========================================
+function isStmtStart(t: Token): boolean {
+    return ["IF", "WHILE", "FOR", "RETURN", "FUNCTION", "CLASS", "ENUM", "STRUCT",
+        "IMPORT", "LOCAL", "PUBLIC", "PRIVATE", "BREAK", "CONTINUE", "TRY",
+        "ASYNC", "IDENT", "TRUE", "FALSE", "NIL", "SELF", "NOT", "MINUS",
+        "LPAREN", "LBRACKET", "LBRACE", "NUMBER", "STRINGLIT", "FSTRING", "COMMENT",
+        "AT", "AWAIT"].includes(t.type);
+}
+
 class Parser {
     private tokens: Token[];
     private pos: number;
@@ -237,6 +245,12 @@ class Parser {
         throw new Error(`${this.posString()}: expected ${type}, found ${t?.type ?? "EOF"}`);
     }
 
+    private expectIdentOrSelf(): Token {
+        const t = this.peek();
+        if (t && (t.type === "IDENT" || t.type === "SELF")) return this.advance()!;
+        throw new Error(`${this.posString()}: expected identifier or self, found ${t?.type ?? "EOF"}`);
+    }
+
     private currentSpan(): Span {
         const t = this.tokens[this.pos - 1];
         return t ? { start: t.span.start, end: t.span.end } : { start: 0, end: 0 };
@@ -245,7 +259,7 @@ class Parser {
     private semicolonOrEnd(): void {
         const t = this.peek();
         if (!t || t.type === "SEMICOLON") { if (t) this.advance(); return; }
-        if (t.type === "RBRACE") return;
+        if (t.type === "RBRACE" || isStmtStart(t)) return;
         throw new Error(`${this.posString()}: expected semicolon or end of statement, found ${t.type}`);
     }
 
@@ -432,7 +446,7 @@ class Parser {
     private parseParamList(params: string[], paramTypes: (string | null)[], defaults: (Expr | null)[]): void {
         if (!this.peek() || this.peek()!.type === "RPAREN") return;
         // Parse first param
-        const first = this.expect("IDENT");
+        const first = this.expectIdentOrSelf();
         params.push(first.value);
         let ptype: string | null = null;
         let def: Expr | null = null;
@@ -451,7 +465,7 @@ class Parser {
             this.advance();
             const t = this.peek();
             if (t?.type === "RPAREN" || !t) break;
-            const p = this.expect("IDENT");
+            const p = this.expectIdentOrSelf();
             params.push(p.value);
             let pt: string | null = null;
             let d: Expr | null = null;
