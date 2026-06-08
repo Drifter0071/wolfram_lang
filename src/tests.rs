@@ -1640,3 +1640,578 @@ RunService.Heartbeat:Connect(heartbeat)
     assert!(r.contains("entity:update(dt)"));
     assert!(r.contains("entity:destroy()"));
 }
+
+// ─── U: Private Member Scope & Forwarding Stubs ─────────────────────
+// Tests for shadow-table resolution, method forwarding stubs,
+// safe-chain suppression on self-rooted chains, and scope shadowing.
+
+#[test]
+fn u1_private_bare_access_resolves_to_shadow_table() {
+    let src = r#"
+private class Data {
+    private local value = 10
+    private function get() {
+        return value
+    }
+}
+"#;
+    let r = transpile(src, "u1.wrm").unwrap();
+    assert!(r.contains("__private_Data[self].value"));
+    assert!(r.contains("__private_Data[self].get = function("));
+}
+
+#[test]
+fn u2_private_member_chain_resolves_correctly() {
+    let src = r#"
+private class Holder {
+    private local config = {radius = 5}
+    private function read() {
+        return config.radius
+    }
+}
+"#;
+    let r = transpile(src, "u2.wrm").unwrap();
+    assert!(r.contains("__private_Holder[self].config.radius"));
+}
+
+#[test]
+fn u3_self_rooted_chain_skips_safe_wrapping() {
+    let src = r#"
+private class Box {
+    private local data = {x = 1, y = 2}
+    private function show() {
+        return self.data.x
+    }
+}
+"#;
+    let r = transpile(src, "u3.wrm").unwrap();
+    assert!(!r.contains("(self and self.data and self.data.x)"));
+    assert!(r.contains("__private_Box[self].data.x"));
+}
+
+#[test]
+fn u4_non_self_chain_keeps_safe_wrapping() {
+    let src = r#"
+local function read(obj) {
+    return obj.nested.value
+}
+"#;
+    let r = transpile(src, "u4.wrm").unwrap();
+    assert!(r.contains("(obj and obj.nested and obj.nested.value)"));
+}
+
+#[test]
+fn u5_private_method_forwarding_stub_generated() {
+    let src = r#"
+private class Calc {
+    private function add(a, b) {
+        return a + b
+    }
+}
+local c = Calc.new()
+c:add(3, 4)
+"#;
+    let r = transpile(src, "u5.wrm").unwrap();
+    assert!(r.contains("function Calc:add(a, b)\n"));
+    assert!(r.contains("__private_Calc[self].add(a, b)"));
+    assert!(r.contains("c:add(3, 4)"));
+}
+
+#[test]
+fn u6_private_method_internal_call_uses_direct_shadow_access() {
+    let src = r#"
+private class Chain {
+    private function inner() { return 42 }
+    private function outer() { return self:inner() }
+}
+"#;
+    let r = transpile(src, "u6.wrm").unwrap();
+    assert!(r.contains("__private_Chain[self].inner()"));
+}
+
+#[test]
+fn u7_private_member_assign_no_local_declaration() {
+    let src = r#"
+private class Counter {
+    private local count = 0
+    private function increment() {
+        count = count + 1
+    }
+}
+"#;
+    let r = transpile(src, "u7.wrm").unwrap();
+    assert!(r.contains("__private_Counter[self].count = __private_Counter[self].count + 1"));
+}
+
+#[test]
+fn u8_private_init_called_from_constructor() {
+    let src = r#"
+private class Widget {
+    private local ready = false
+    private function init() {
+        ready = true
+    }
+}
+"#;
+    let r = transpile(src, "u8.wrm").unwrap();
+    assert!(r.contains("__private_Widget[self].init(...)"));
+    assert!(!r.contains("self:init(...)"));
+}
+
+#[test]
+fn u9_private_init_sets_public_property() {
+    let src = r#"
+private class Configurable {
+    private function init(cfg) {
+        self.cfg = cfg
+    }
+}
+local obj = Configurable.new({a = 1})
+obj:init({b = 2})
+"#;
+    let r = transpile(src, "u9.wrm").unwrap();
+    assert!(r.contains("self.cfg = cfg"));
+    assert!(r.contains("function Configurable:init(cfg)"));
+}
+
+#[test]
+fn u10_forwarding_stub_no_params() {
+    let src = r#"
+private class Empty {
+    private function ping() { }
+}
+"#;
+    let r = transpile(src, "u10.wrm").unwrap();
+    assert!(r.contains("function Empty:ping()\n"));
+    assert!(r.contains("__private_Empty[self].ping()"));
+}
+
+#[test]
+fn u11_forwarding_stub_multiple_params() {
+    let src = r#"
+private class Mover {
+    private function move(a, b, c) { }
+}
+"#;
+    let r = transpile(src, "u11.wrm").unwrap();
+    assert!(r.contains("function Mover:move(a, b, c)\n"));
+    assert!(r.contains("__private_Mover[self].move(a, b, c)"));
+}
+
+#[test]
+fn u12_lexical_local_shadows_private_member() {
+    let src = r#"
+private class Shadow {
+    private local name = "class"
+    private function test() {
+        local name = "local"
+        return name
+    }
+}
+"#;
+    let r = transpile(src, "u12.wrm").unwrap();
+    assert!(r.contains("local name = \"local\""));
+    assert!(r.contains("return name"));
+}
+
+#[test]
+fn u13_multiple_classes_separate_private_tables() {
+    let src = r#"
+private class A {
+    private local x = 1
+}
+private class B {
+    private local x = 2
+}
+"#;
+    let r = transpile(src, "u13.wrm").unwrap();
+    assert!(r.contains("local __private_A = setmetatable"));
+    assert!(r.contains("local __private_B = setmetatable"));
+    assert!(r.contains("__private_A[self].x = 1"));
+    assert!(r.contains("__private_B[self].x = 2"));
+}
+
+#[test]
+fn u14_public_method_still_works_normally() {
+    let src = r#"
+private class Mixed {
+    private local secret = "hidden"
+    public function expose() {
+        return self:readSecret()
+    }
+    private function readSecret() {
+        return secret
+    }
+}
+"#;
+    let r = transpile(src, "u14.wrm").unwrap();
+    assert!(r.contains("function Mixed:expose()"));
+    assert!(r.contains("__private_Mixed[self].readSecret()"));
+}
+
+#[test]
+fn u15_range_for_loop_generated_correctly() {
+    let src = r#"
+local function loop() {
+    for i in range(0, 5) {
+        print(i)
+    }
+}
+"#;
+    let r = transpile(src, "u15.wrm").unwrap();
+    assert!(r.contains("for i = 0, 5 - 1 do"));
+}
+
+#[test]
+fn u16_deep_self_chain_no_safe_wrapping() {
+    let src = r#"
+private class Deep {
+    private local nested = {inner = {value = 42}}
+    private function get() {
+        return self.data.deep.field
+    }
+}
+"#;
+    let r = transpile(src, "u16.wrm").unwrap();
+    assert!(!r.contains("(self and self.data and self.data.deep and self.data.deep.field)"));
+}
+
+#[test]
+fn u17_private_method_call_with_args_from_other_private_method() {
+    let src = r#"
+private class Helper {
+    private function double(x) { return x * 2 }
+    private function compute() {
+        return self:double(5)
+    }
+}
+"#;
+    let r = transpile(src, "u17.wrm").unwrap();
+    assert!(r.contains("__private_Helper[self].double(5)"));
+}
+
+#[test]
+fn u18_private_member_used_in_binary_expression() {
+    let src = r#"
+private class Calc {
+    private local offset = 10
+    private function add(v) {
+        return v + offset
+    }
+}
+"#;
+    let r = transpile(src, "u18.wrm").unwrap();
+    assert!(r.contains("v + __private_Calc[self].offset"));
+}
+
+#[test]
+fn u19_private_table_field_initialized_in_constructor() {
+    let src = r#"
+private class Store {
+    private local items = []
+}
+"#;
+    let r = transpile(src, "u19.wrm").unwrap();
+    assert!(r.contains("__private_Store[self].items = {}"));
+}
+
+#[test]
+fn u20_forwarding_stub_no_self_arg_in_call() {
+    let src = r#"
+private class Greeter {
+    private function greet(name) {
+        print(f"Hello {name}")
+    }
+}
+local g = Greeter.new()
+g:greet("World")
+"#;
+    let r = transpile(src, "u20.wrm").unwrap();
+    assert!(r.contains("__private_Greeter[self].greet(name)"));
+    assert!(!r.contains("__private_Greeter[self].greet(self, name)"));
+}
+
+#[test]
+fn u21_constructor_private_var_init_with_expr() {
+    let src = r#"
+private class Calc {
+    private local factor = 2 * 3
+    private local multiplier = factor + 1
+}
+"#;
+    let r = transpile(src, "u21.wrm").unwrap();
+    assert!(r.contains("__private_Calc[self].factor = 2 * 3"));
+    assert!(r.contains("__private_Calc[self].multiplier"));
+}
+
+#[test]
+fn u22_private_method_used_as_callback() {
+    let src = r#"
+private class Timer {
+    private function onTick() {
+        spawnedCount = spawnedCount + 1
+    }
+    private local spawnedCount = 0
+}
+"#;
+    let r = transpile(src, "u22.wrm").unwrap();
+    assert!(r.contains("__private_Timer[self].spawnedCount + 1"));
+}
+
+#[test]
+fn u23_enum_var_used_as_private_member_value() {
+    let src = r#"
+private enum Mode { A, B }
+private class Switcher {
+    private local current = Mode.A
+    private function read() { return current }
+}
+"#;
+    let r = transpile(src, "u23.wrm").unwrap();
+    assert!(r.contains("__private_Switcher[self].current"));
+    assert!(r.contains("Mode.A"));
+}
+
+#[test]
+fn u24_struct_default_as_private_member() {
+    let src = r#"
+private struct Vec { x: number, y: number }
+private class Point {
+    private local pos = Vec.new(1, 2)
+}
+"#;
+    let r = transpile(src, "u24.wrm").unwrap();
+    assert!(r.contains("__private_Point[self].pos = Vec.new(1, 2)"));
+}
+
+#[test]
+fn u25_private_vars_not_exported_in_module() {
+    let src = r#"
+private class Internal {
+    private local val = 42
+}
+"#;
+    let r = transpile(src, "u25.wrm").unwrap();
+    assert!(r.contains("local Internal = {}"));
+    assert!(!r.contains("module."));
+}
+
+#[test]
+fn u26_array_length_via_length_property() {
+    let src = r#"
+private class List {
+    private local items = [1, 2, 3]
+    private function count() {
+        return items.length
+    }
+}
+"#;
+    let r = transpile(src, "u26.wrm").unwrap();
+    assert!(r.contains("#__private_List[self].items"));
+}
+
+#[test]
+fn u27_private_method_accesses_self_public_property() {
+    let src = r#"
+private class Foo {
+    private function init(name) {
+        self.name = name
+    }
+}
+"#;
+    let r = transpile(src, "u27.wrm").unwrap();
+    assert!(r.contains("self.name = name"));
+}
+
+#[test]
+fn u28_multiple_private_methods_call_chain() {
+    let src = r#"
+private class Pipeline {
+    private function step1(x) { return x + 1 }
+    private function step2(x) { return x * 2 }
+    private function run() {
+        return self:step2(self:step1(5))
+    }
+}
+"#;
+    let r = transpile(src, "u28.wrm").unwrap();
+    assert!(r.contains("__private_Pipeline[self].step2(__private_Pipeline[self].step1(5))"));
+}
+
+#[test]
+fn u29_private_method_void_no_return() {
+    let src = r#"
+private class Logger {
+    private function log(msg) {
+        print(msg)
+    }
+}
+"#;
+    let r = transpile(src, "u29.wrm").unwrap();
+    assert!(r.contains("__private_Logger[self].log = function(msg)"));
+    assert!(r.contains("function Logger:log(msg)"));
+}
+
+#[test]
+fn u30_for_loop_with_range_and_private_member() {
+    let src = r#"
+private class Looper {
+    private local max = 5
+    private function loop() {
+        for i in range(0, max) {
+            print(i)
+        }
+    }
+}
+"#;
+    let r = transpile(src, "u30.wrm").unwrap();
+    assert!(r.contains("for i = 0, __private_Looper[self].max - 1 do"));
+}
+
+#[test]
+fn u31_fstring_with_private_member_interpolation() {
+    let src = r#"
+private class Info {
+    private local version = "1.0"
+    private function show() {
+        return f"v{version}"
+    }
+}
+"#;
+    let r = transpile(src, "u31.wrm").unwrap();
+    assert!(r.contains("__private_Info[self].version"));
+}
+
+#[test]
+fn u32_ternary_with_private_member() {
+    let src = r#"
+private class Check {
+    private local flag = true
+    private function status() {
+        return flag ? "on" : "off"
+    }
+}
+"#;
+    let r = transpile(src, "u32.wrm").unwrap();
+    assert!(r.contains("if __private_Check[self].flag"));
+}
+
+#[test]
+fn u33_list_comprehension_over_workspace() {
+    let src = r#"
+private class Finder {
+    private function find() {
+        return [p for p in workspace:GetChildren() if (p:IsA("Part"))]
+    }
+}
+"#;
+    let r = transpile(src, "u33.wrm").unwrap();
+    assert!(r.contains("__private_Finder[self].find()"));
+}
+
+#[test]
+fn u34_private_and_public_mixed_in_same_class() {
+    let src = r#"
+private class Hybrid {
+    private local counter = 0
+    public function bump() { counter = counter + 1; return counter }
+    private function reset() { counter = 0 }
+}
+"#;
+    let r = transpile(src, "u34.wrm").unwrap();
+    assert!(r.contains("function Hybrid:bump()"));
+    assert!(r.contains("function Hybrid:reset()"));
+    assert!(r.contains("__private_Hybrid[self].reset()"));
+}
+
+#[test]
+fn u35_init_with_params_stored() {
+    let src = r#"
+private class Data {
+    private local items = []
+    private function init(defaults) {
+        items = defaults
+    }
+}
+"#;
+    let r = transpile(src, "u35.wrm").unwrap();
+    assert!(r.contains("__private_Data[self].items = defaults"));
+}
+
+#[test]
+fn u36_private_class_in_module_context() {
+    let src = r#"
+public class Shared {
+    private local key = "secret"
+}
+"#;
+    let r = transpile(src, "u36.wrm").unwrap();
+    assert!(r.contains("module.Shared = {}"));
+    assert!(r.contains("__private_Shared[self].key"));
+}
+
+#[test]
+fn u37_method_with_default_params() {
+    let src = r#"
+private class Defs {
+    private function greet(name = "World") {
+        print(f"Hello {name}")
+    }
+}
+"#;
+    let r = transpile(src, "u37.wrm").unwrap();
+    assert!(r.contains("function Defs:greet(name)"));
+    assert!(r.contains("__private_Defs[self].greet(name)"));
+}
+
+#[test]
+fn u38_private_method_accessed_externally_via_stub() {
+    let src = r#"
+private class Calc {
+    private function square(x) { return x * x }
+}
+local c = Calc.new()
+local r = c:square(3)
+"#;
+    let r = transpile(src, "u38.wrm").unwrap();
+    assert!(r.contains("c:square(3)"));
+    assert!(r.contains("function Calc:square(x)"));
+}
+
+#[test]
+fn u39_nested_if_with_private_member() {
+    let src = r#"
+private class Guard {
+    private local active = true
+    private function check() {
+        if (active) {
+            if (active) {
+                return 1
+            }
+        }
+        return 0
+    }
+}
+"#;
+    let r = transpile(src, "u39.wrm").unwrap();
+    assert!(r.contains("if __private_Guard[self].active then"));
+}
+
+#[test]
+fn u40_try_catch_in_private_method() {
+    let src = r#"
+private class Safe {
+    private function run() {
+        try {
+            risky()
+        } catch e {
+            print(f"Caught {e}")
+        }
+    }
+}
+"#;
+    let r = transpile(src, "u40.wrm").unwrap();
+    assert!(r.contains("__private_Safe[self].run = function("));
+    assert!(r.contains("pcall("));
+    assert!(r.contains("function Safe:run()"));
+}
