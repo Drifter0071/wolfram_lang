@@ -155,8 +155,8 @@ function startLsp() {
   try {
     const node = getNodePath();
     const serverOptions: ServerOptions = {
-      run: { command: node, args: [serverPath] },
-      debug: { command: node, args: [serverPath, "--debug"] },
+      run: { command: node, args: [serverPath, "--stdio"] },
+      debug: { command: node, args: [serverPath, "--stdio", "--debug"] },
     };
     const clientOptions: LanguageClientOptions = {
       documentSelector: [{ scheme: "file", language: "wolfram" }],
