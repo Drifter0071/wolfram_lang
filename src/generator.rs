@@ -565,7 +565,7 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                 let init_is_private = body.iter().any(|b| matches!(b,
                     Stmt::FuncDef { name: n, access, .. } if n == "init" && access == "private"));
                 if init_is_private {
-                    s.push_str(&format!("    __private_{}[self].init(self, ...)\n", name));
+                    s.push_str(&format!("    __private_{}[self].init(...)\n", name));
                 } else {
                     s.push_str("    self:init(...)\n");
                 }
@@ -606,9 +606,9 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                 {
                     if access == "private" {
                         s.push_str(&format!("function {}:{}({})\n", name_use, m_name, params.join(", ")));
-                        let mut forward_args = format!("    return __private_{}[self].{}(self", name, m_name);
-                        for p in params {
-                            forward_args.push_str(&format!(", {}", p));
+                        let mut forward_args = format!("    return __private_{}[self].{}(", name, m_name);
+                        if !params.is_empty() {
+                            forward_args.push_str(&params.join(", "));
                         }
                         forward_args.push_str(")\n");
                         s.push_str(&forward_args);
@@ -831,14 +831,9 @@ fn generate_expr_impl(expr: &Expr, ctx: &GenContext, safe_chain: bool) -> String
             if let Some(class_name) = &ctx.class_name {
                 if ctx.private_methods.contains(field) {
                     let obj_str = generate_expr(obj, ctx);
-                    let args_str = if arg_strs.is_empty() {
-                        obj_str.clone()
-                    } else {
-                        format!("{}, {}", obj_str, arg_strs.join(", "))
-                    };
                     return format!(
                         "__private_{}[{}].{}({})",
-                        class_name, obj_str, field, args_str
+                        class_name, obj_str, field, arg_strs.join(", ")
                     );
                 }
             }
