@@ -71,22 +71,32 @@ function resolveChainedType(prefix: string, bindings: Bindings, scope: Map<strin
     const g = bindings.getGlobal(root);
     const rootType = g ? g.type : (scope.get(root) ?? undefined);
     if (!rootType) {
-        if (bindings.getType(root)) return root;
+        // Check if root itself is a known type (e.g. Players, ReplicatedStorage, etc.)
+        if (bindings.getType(root)) {
+            let current = root;
+            for (let i = 1; i < parts.length; i++) {
+                const props = bindings.getAllProperties(current);
+                const p = props.find(x => x.name.toLowerCase() === parts[i].toLowerCase());
+                if (p) { current = p.type; continue; }
+                const methods = bindings.getAllMethods(current);
+                const m = methods.find(x => x.name.toLowerCase() === parts[i].toLowerCase());
+                if (m) { current = m.returns; continue; }
+                return current;
+            }
+            return current;
+        }
         return undefined;
     }
 
     let current = rootType;
     for (let i = 1; i < parts.length; i++) {
         const seg = parts[i];
-        // Check properties
         const props = bindings.getAllProperties(current);
         const p = props.find(x => x.name.toLowerCase() === seg.toLowerCase());
         if (p) { current = p.type; continue; }
-        // Check methods (use return type)
         const methods = bindings.getAllMethods(current);
         const m = methods.find(x => x.name.toLowerCase() === seg.toLowerCase());
         if (m) { current = m.returns; continue; }
-        // Fallback for Instance base class
         if (current === "Instance" || bindings.getType("Instance")?.extends) {
             return "Instance";
         }
@@ -97,6 +107,49 @@ function resolveChainedType(prefix: string, bindings: Bindings, scope: Map<strin
 
 const VALUE_KW = KEYWORDS.filter(k => ["true", "false", "nil", "self"].includes(k.label));
 const STRUCT_KW = KEYWORDS.filter(k => ["if", "else", "elif", "while", "for", "function", "class", "struct", "enum", "import", "local", "return", "break", "continue", "public", "private", "try", "catch"].includes(k.label));
+
+function buildEnrichedScope(source: string, bindings: Bindings): Map<string, string> {
+    const scope = new Map<string, string>();
+
+    // local name = bindings.new(...)  /  local name = Type.new(...)
+    const newRe = /local\s+(\w+)\s*=\s*(\w+(?:\.\w+)*)\.new\s*\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = newRe.exec(source)) !== null) {
+        const typeName = resolveChainedType(m[2], bindings, new Map());
+        scope.set(m[1], typeName ?? m[2]);
+    }
+
+    // local name = expr:GetService("ServiceName")
+    const svcRe = /local\s+(\w+)\s*=.*:GetService\s*\(\s*"([^"]+)"/g;
+    while ((m = svcRe.exec(source)) !== null) scope.set(m[1], m[2]);
+
+    // local name = Expr.Chain — resolve through bindings
+    const chainRe = /local\s+(\w+)\s*=\s*([\w.]+)(?!\()/g;
+    while ((m = chainRe.exec(source)) !== null) {
+        const varName = m[1];
+        const rhs = m[2];
+        if (scope.has(varName)) continue;
+        if (rhs.includes(".")) {
+            const typeName = resolveChainedType(rhs, bindings, new Map());
+            if (typeName) scope.set(varName, typeName);
+            continue;
+        }
+        // Simple assignment: local x = y — try to look up y
+        const g = bindings.getGlobal(rhs);
+        if (g) { scope.set(varName, g.type); continue; }
+        // Check if rhs is a known type name itself
+        const t = bindings.getType(rhs);
+        if (t) { scope.set(varName, rhs); continue; }
+    }
+
+    // for var in expr
+    const forRe = /for\s+(\w+)\s*(?:,\s*\w+\s*)?in\s+(.+?)(?:\{|$)/g;
+    while ((m = forRe.exec(source)) !== null) {
+        if (!scope.has(m[1])) scope.set(m[1], "any");
+    }
+
+    return scope;
+}
 
 export function handleCompletion(
     document: TextDocument,
@@ -132,8 +185,8 @@ export function handleCompletion(
     if (ctx === Ctx.DOT_COLON) {
         const lastChar = linePrefix[linePrefix.length - 1] ?? "";
         const expr = extractExprBeforeDot(document, line, character);
-        const parsed = parseDocument(document.getText());
-        const typeName = resolveChainedType(expr, bindings, parsed.scope);
+        const scope = buildEnrichedScope(document.getText(), bindings);
+        const typeName = resolveChainedType(expr, bindings, scope);
         if (typeName) {
             if (lastChar === ":") {
                 for (const m of bindings.getAllMethods(typeName)) {
@@ -178,10 +231,10 @@ export function handleCompletion(
 
     const fullLine = linePrefix.trimStart();
     const wp = (fullLine.match(/([\w.]+)$/) ?? [""])[0].toLowerCase();
-    const parsed = parseDocument(document.getText());
+    const scope = buildEnrichedScope(document.getText(), bindings);
 
     // Locals
-    for (const [name, type] of parsed.scope) {
+    for (const [name, type] of scope) {
         if (name.toLowerCase().startsWith(wp)) {
             push({
                 label: name, kind: CompletionItemKind.Variable,

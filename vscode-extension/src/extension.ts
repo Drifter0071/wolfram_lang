@@ -110,6 +110,9 @@ export function activate(context: vscode.ExtensionContext) {
   // Start the TypeScript language server
   startLsp();
 
+  // Always register native completion + hover as fallback/supplement
+  registerNativeProviders(context);
+
   // Auto-watch
   const watchOnOpen = vscode.workspace.getConfiguration("wolfram").get<boolean>("watchOnOpen", true);
   if (watchOnOpen && vscode.workspace.workspaceFolders?.length) {
@@ -168,7 +171,6 @@ function startLsp() {
       () => {
         outputChannel.appendLine("TypeScript LSP client connected");
         setStatus(LspStatus.READY);
-        disposeNativeProviders();
       },
       (err) => {
         outputChannel.appendLine(`LSP start failed: ${err}`);

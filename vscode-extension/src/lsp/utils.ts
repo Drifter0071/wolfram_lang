@@ -32,8 +32,12 @@ export function extractExprBeforeDot(document: TextDocument, lineIdx: number, ch
     for (let i = 0; i < lineIdx; i++) {
         offset += (lines[i]?.length ?? 0) + 1;
     }
-    offset += charIdx - 1;
-    if (offset > 0) offset -= 1;
+    offset += charIdx;
+    if (offset > content.length) offset = content.length;
+    // offset is now at the character AFTER the dot (cursor position)
+    // Back up to just before the dot
+    if (offset > 0 && content[offset - 1] === ".") offset--;
+    if (offset > 0 && content[offset - 1] === ":") offset--;
     let start = offset;
     while (start > 0) {
         const c = content[start - 1];

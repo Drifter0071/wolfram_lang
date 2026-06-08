@@ -125,8 +125,10 @@ function extractExprBeforeDot(source: string, lineIdx: number, col: number): str
   for (let i = 0; i < lineIdx; i++) {
     offset += source.split("\n")[i]?.length ?? 0;
   }
-  offset += col - 1;
-  if (offset > 0) offset -= 1;
+  offset += col;
+  if (offset > source.length) offset = source.length;
+  if (offset > 0 && source[offset - 1] === ".") offset--;
+  if (offset > 0 && source[offset - 1] === ":") offset--;
   let start = offset;
   while (start > 0) {
     const c = source[start - 1];
@@ -135,7 +137,7 @@ function extractExprBeforeDot(source: string, lineIdx: number, col: number): str
   return source.substring(start, offset);
 }
 
-function extractLocalTypes(document: vscode.TextDocument): Map<string, string> {
+function extractLocalTypes(document: vscode.TextDocument, bindings: WoldBindings): Map<string, string> {
   const map = new Map<string, string>();
   const text = document.getText();
 
@@ -149,12 +151,29 @@ function extractLocalTypes(document: vscode.TextDocument): Map<string, string> {
   while ((m = typeRe.exec(text)) !== null) { if (!map.has(m[1])) map.set(m[1], m[1]); }
 
   // local name = ClassName.new(...)
-  const newRe = /local\s+(\w+)\s*=\s*(\w+)\.new\s*\(/g;
+  const newRe = /local\s+(\w+)\s*=\s*(\w+(?:\.\w+)*)\.new\s*\(/g;
   while ((m = newRe.exec(text)) !== null) map.set(m[1], m[2]);
 
   // local name = expr:GetService("ServiceName")
   const svcRe = /local\s+(\w+)\s*=.*:GetService\s*\(\s*"([^"]+)"/g;
   while ((m = svcRe.exec(text)) !== null) map.set(m[1], m[2]);
+
+  // local name = Chain.Of.Properties — resolve through bindings
+  const chainRe = /local\s+(\w+)\s*=\s*([\w.]+)(?!\()/g;
+  while ((m = chainRe.exec(text)) !== null) {
+    if (map.has(m[1])) continue;
+    const rhs = m[2];
+    if (rhs.includes(".")) {
+      const typeName = resolveExprType(rhs, bindings, new Map());
+      if (typeName) map.set(m[1], typeName);
+      continue;
+    }
+    // Simple assignment: resolve through globals
+    const g = bindings.getGlobal(rhs);
+    if (g) { map.set(m[1], g.type); continue; }
+    const t = bindings.getType(rhs);
+    if (t) { map.set(m[1], rhs); continue; }
+  }
 
   // local name = <anything>   (generic local assignment — use "local" as placeholder type)
   const localRe = /local\s+(\w+)\s*=\s*[^(]/gm;
@@ -304,7 +323,21 @@ function resolveExprType(
   }
 
   if (locals.has(root)) return locals.get(root);
-  if (bindings.getType(root)) return root;
+  if (bindings.getType(root)) {
+    if (parts.length === 1) return root;
+    // Chain through properties of the known type
+    let current = root;
+    for (let i = 1; i < parts.length; i++) {
+      const props = bindings.getAllProperties(current);
+      const p = props.find(x => x.name.toLowerCase() === parts[i].toLowerCase());
+      if (p) { current = p.type; continue; }
+      const methods = bindings.getAllMethods(current);
+      const m = methods.find(x => x.name.toLowerCase() === parts[i].toLowerCase());
+      if (m) { current = m.returns; continue; }
+      return undefined;
+    }
+    return current;
+  }
   return undefined;
 }
 
@@ -430,7 +463,7 @@ export function createCompletionProvider(bindings: WoldBindings): vscode.Complet
       if (ctx === Ctx.DOT_COLON) {
         const lastChar = linePrefix[linePrefix.length - 1] ?? "";
         const expr = extractExprBeforeDot(document.getText(), position.line, position.character);
-        const locals = extractLocalTypes(document);
+        const locals = extractLocalTypes(document, bindings);
         const typeName = resolveExprType(expr, bindings, locals);
         if (typeName) {
           const items: vscode.CompletionItem[] = [];
@@ -451,7 +484,7 @@ export function createCompletionProvider(bindings: WoldBindings): vscode.Complet
       const wordPrefix = wordMatch ? wordMatch[1].toLowerCase() : "";
       const seen = new Set<string>();
       const items: vscode.CompletionItem[] = [];
-      const locals = extractLocalTypes(document);
+      const locals = extractLocalTypes(document, bindings);
 
       function push(item: vscode.CompletionItem) {
         const lbl = item.label as string;
@@ -581,7 +614,7 @@ export function createHoverProvider(bindings: WoldBindings): vscode.HoverProvide
         return new vscode.Hover(md);
       }
 
-      const locals = extractLocalTypes(document);
+      const locals = extractLocalTypes(document, bindings);
       const localType = locals.get(word);
       if (localType) {
         const md = new vscode.MarkdownString();

@@ -38,8 +38,23 @@ function resolveExprType(expr: string, bindings: Bindings, scope: Map<string, st
     const parts = expr.split(".");
     const root = parts[0];
     const g = bindings.getGlobal(root);
-    const rootType = g ? g.type : (scope.get(root) ?? undefined);
-    if (!rootType) return bindings.getType(root) ? root : undefined;
+    const rootType: string | undefined = g ? g.type : (scope.get(root) ?? undefined);
+    if (!rootType) {
+        if (bindings.getType(root)) {
+            let current = root;
+            for (let i = 1; i < parts.length; i++) {
+                const props = bindings.getAllProperties(current);
+                const p = props.find(x => x.name.toLowerCase() === parts[i].toLowerCase());
+                if (p) { current = p.type; continue; }
+                const methods = bindings.getAllMethods(current);
+                const m = methods.find(x => x.name.toLowerCase() === parts[i].toLowerCase());
+                if (m) { current = m.returns; continue; }
+                return undefined;
+            }
+            return current;
+        }
+        return undefined;
+    }
     let current = rootType;
     for (let i = 1; i < parts.length; i++) {
         const seg = parts[i];
