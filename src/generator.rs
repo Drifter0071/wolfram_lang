@@ -592,6 +592,30 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
                     }
                 }
             }
+
+            // Generate public forwarding stubs for private methods so they
+            // are callable externally via instance:method() — delegates to
+            // the shadow table where the implementation lives.
+            for b in body {
+                if let Stmt::FuncDef {
+                    name: m_name,
+                    params,
+                    access,
+                    ..
+                } = b
+                {
+                    if access == "private" {
+                        s.push_str(&format!("function {}:{}({})\n", name_use, m_name, params.join(", ")));
+                        let mut forward_args = format!("    return __private_{}[self].{}(self", name, m_name);
+                        for p in params {
+                            forward_args.push_str(&format!(", {}", p));
+                        }
+                        forward_args.push_str(")\n");
+                        s.push_str(&forward_args);
+                        s.push_str("end\n");
+                    }
+                }
+            }
             s
         }
         Stmt::EnumDef { name, variants, .. } => {
