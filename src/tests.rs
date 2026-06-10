@@ -1690,14 +1690,15 @@ private class Box {
 }
 
 #[test]
-fn u4_non_self_chain_keeps_safe_wrapping() {
+fn u4_non_self_chain_no_safe_wrapping() {
     let src = r#"
 local function read(obj) {
     return obj.nested.value
 }
 "#;
     let r = transpile(src, "u4.wrm").unwrap();
-    assert!(r.contains("(obj and obj.nested and obj.nested.value)"));
+    assert!(!r.contains("(obj and obj.nested and obj.nested.value)"));
+    assert!(r.contains("return obj.nested.value"));
 }
 
 #[test]
@@ -2214,4 +2215,474 @@ private class Safe {
     assert!(r.contains("__private_Safe[self].run = function("));
     assert!(r.contains("pcall("));
     assert!(r.contains("function Safe:run()"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// U-SECTION — Type Annotations
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn u41_local_type_annotation_simple() {
+    let src = r#"local player: Player = Players.LocalPlayer
+print(player.Name)"#;
+    let r = transpile(src, "u41.wrm").unwrap();
+    assert!(r.contains("local player = Players.LocalPlayer"));
+    assert!(r.contains("print(player.Name)"));
+    assert!(!r.contains(": Player"));
+}
+
+#[test]
+fn u42_local_type_annotation_no_value() {
+    let src = r#"local zone: Part
+zone = Instance.new("Part")"#;
+    let r = transpile(src, "u42.wrm").unwrap();
+    assert!(r.contains("local zone"));
+    assert!(!r.contains(": Part"));
+    assert!(r.contains("zone = Instance.new(\"Part\")"));
+}
+
+#[test]
+fn u43_array_type_annotation() {
+    let src = r#"local zones: Part[] = workspace:GetChildren()
+for zone in zones {
+    zone.Anchored = true
+}"#;
+    let r = transpile(src, "u43.wrm").unwrap();
+    assert!(r.contains("local zones = workspace:GetChildren()"));
+    assert!(!r.contains(": Part[]"));
+    assert!(r.contains("for"));
+}
+
+#[test]
+fn u44_function_param_type_annotation() {
+    let src = r#"function greet(player: Player, message: string) {
+    print(f"{player.Name}: {message}")
+}"#;
+    let r = transpile(src, "u44.wrm").unwrap();
+    assert!(r.contains("function greet(player, message)"));
+    assert!(!r.contains(": Player"));
+    assert!(!r.contains(": string"));
+}
+
+#[test]
+fn u45_function_return_type_annotation() {
+    let src = r#"function getPlayer(name: string) {
+    return game.Players:FindFirstChild(name)
+}"#;
+    let r = transpile(src, "u45.wrm").unwrap();
+    assert!(r.contains("function getPlayer(name)"));
+    assert!(!r.contains(": string"));
+}
+
+#[test]
+fn u46_for_loop_type_annotation() {
+    let src = r#"for zone: Part in workspace:GetChildren() {
+    zone.Anchored = true
+}"#;
+    let r = transpile(src, "u46.wrm").unwrap();
+    assert!(r.contains("for"));
+    assert!(!r.contains(": Part"));
+}
+
+#[test]
+fn u47_multiple_params_all_typed() {
+    let src = r#"function createBeam(from: Vector3, to: Vector3, color: Color3) {
+    print(from)
+    print(to)
+    print(color)
+}"#;
+    let r = transpile(src, "u47.wrm").unwrap();
+    assert!(r.contains("function createBeam(from, to, color)"));
+}
+
+#[test]
+fn u48_typed_local_and_typed_param_together() {
+    let src = r#"local p: Player = Players.LocalPlayer
+function heal(target: Player) {
+    target.Health += 10
+}
+heal(p)"#;
+    let r = transpile(src, "u48.wrm").unwrap();
+    assert!(r.contains("local p = Players.LocalPlayer"));
+    assert!(r.contains("function heal(target)"));
+    assert!(!r.contains(": Player"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// U-SECTION — For-Loop Fixes
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn u49_get_tagged_uses_ipairs() {
+    let src = r#"local zones = CollectionService:GetTagged("zone")
+for zone in zones {
+    print(zone.Name)
+}"#;
+    let r = transpile(src, "u49.wrm").unwrap();
+    assert!(r.contains("for _, zone in ipairs(zones) do"));
+}
+
+#[test]
+fn u50_get_children_uses_ipairs() {
+    let src = r#"local kids = workspace:GetChildren()
+for kid in kids {
+    print(kid.Name)
+}"#;
+    let r = transpile(src, "u50.wrm").unwrap();
+    assert!(r.contains("for _, kid in ipairs(kids) do"));
+}
+
+#[test]
+fn u51_get_descendants_uses_ipairs() {
+    let src = r#"local all = workspace:GetDescendants()
+for item in all {
+    print(item.Name)
+}"#;
+    let r = transpile(src, "u51.wrm").unwrap();
+    assert!(r.contains("for _, item in ipairs(all) do"));
+}
+
+#[test]
+fn u52_generic_for_pairs_uses_key_position() {
+    let src = r#"local data = {key = "value", answer = 42}
+for k in data {
+    print(k)
+}"#;
+    let r = transpile(src, "u52.wrm").unwrap();
+    assert!(r.contains("for k, _ in pairs(data) do"));
+}
+
+#[test]
+fn u53_mixed_for_array_and_table() {
+    let src = r#"local arr = ["a", "b", "c"]
+local tbl = {x = 1, y = 2}
+for item in arr { print(item) }
+for key in tbl { print(key) }"#;
+    let r = transpile(src, "u53.wrm").unwrap();
+    assert!(r.contains("for _, item in ipairs(arr) do"));
+    assert!(r.contains("for key, _ in pairs(tbl) do"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// U-SECTION — Safe-Chain Behavior (no wrapping)
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn u54_deep_chain_no_safe_wrapping() {
+    let src = r#"local x = obj.a.b.c.d
+print(x)"#;
+    let r = transpile(src, "u54.wrm").unwrap();
+    assert!(r.contains("local x = obj.a.b.c.d"));
+    assert!(!r.contains(" and "));
+}
+
+#[test]
+fn u55_mid_chain_no_wrapping() {
+    let src = r#"local ui = zone.Display.Canvas.InfoDisplay
+ui.Size = UDim2.new(1,0,1,0)"#;
+    let r = transpile(src, "u55.wrm").unwrap();
+    assert!(r.contains("local ui = zone.Display.Canvas.InfoDisplay"));
+    assert!(!r.contains(" and "));
+}
+
+#[test]
+fn u56_self_chain_still_plain() {
+    let src = r#"public class Box {
+    pos = Vector3.new(0,0,0)
+    public function move(x: number, y: number, z: number) {
+        self.pos = self.pos + Vector3.new(x,y,z)
+    }
+}"#;
+    let r = transpile(src, "u56.wrm").unwrap();
+    assert!(r.contains("self.pos = self.pos + Vector3.new(x, y, z)"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// U-SECTION — OverlapParams / RaycastParams (global recognition)
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn u57_overlap_params_new_no_warning() {
+    let src = r#"local op = OverlapParams.new()
+op.FilterType = Enum.RaycastFilterType.Include
+workspace:GetPartBoundsInRadius(Vector3.new(0,0,0), 50, op)"#;
+    let r = transpile(src, "u57.wrm").unwrap();
+    assert!(r.contains("local op = OverlapParams.new()"));
+    assert!(r.contains("Enum.RaycastFilterType.Include"));
+}
+
+#[test]
+fn u58_raycast_params_creation() {
+    let src = r#"local rp = RaycastParams.new()
+rp.FilterType = Enum.RaycastFilterType.Exclude
+rp.IgnoreWater = true
+workspace:Raycast(Vector3.new(0,0,0), Vector3.new(0,100,0), rp)"#;
+    let r = transpile(src, "u58.wrm").unwrap();
+    assert!(r.contains("local rp = RaycastParams.new()"));
+    assert!(r.contains("rp.IgnoreWater = true"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// U-SECTION — Private Class Edge Cases
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn u59_private_class_with_typed_constructor() {
+    let src = r#"private class Counter {
+    count = 0
+    public function increment(amount: number) {
+        self.count += amount
+    }
+}"#;
+    let r = transpile(src, "u59.wrm").unwrap();
+    assert!(r.contains("__private_Counter"));
+    assert!(r.contains("function Counter:increment(amount)"));
+}
+
+#[test]
+fn u60_private_method_chaining_self() {
+    let src = r#"private class Pipeline {
+    data = {}
+    private function process() {
+        self.clean()
+        self.normalize()
+    }
+    private function clean() {
+        self.data.cleaned = true
+    }
+    private function normalize() {
+        self.data.normalized = true
+    }
+    public function run() {
+        self.process()
+    }
+}"#;
+    let r = transpile(src, "u60.wrm").unwrap();
+    assert!(r.contains("__private_Pipeline"));
+    assert!(r.contains("function Pipeline:run()"));
+}
+
+#[test]
+fn u61_private_var_deep_chain() {
+    let src = r#"private class Data {
+    config = {value = 42}
+    public function read() {
+        return self.config.value
+    }
+}"#;
+    let r = transpile(src, "u61.wrm").unwrap();
+    assert!(r.contains("__private_Data"));
+    assert!(r.contains("self.config.value"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// U-SECTION — Comp / Misc Edge Cases
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn u62_list_comp_with_local_variable() {
+    let src = r#"
+local function find(vals, target) {
+    local found = [val for val in vals if val == target]
+    return found.length > 0
+}"#;
+    let r = transpile(src, "u62.wrm").unwrap();
+    assert!(r.contains("local found = "));
+}
+
+#[test]
+fn u63_nested_try_catch() {
+    let src = r##"
+try {
+    try {
+        risky()
+    } catch inner {
+        print(f"inner: {inner}")
+    }
+} catch outer {
+    print(f"outer: {outer}")
+}"##;
+    let r = transpile(src, "u63.wrm").unwrap();
+    assert!(r.contains("pcall"));
+    assert!(r.contains("print"));
+}
+
+#[test]
+fn u64_empty_loop_does_not_crash() {
+    let src = r#"for zone in {} {
+    true
+}"#;
+    let r = transpile(src, "u64.wrm").unwrap();
+    assert!(r.contains("for"));
+}
+
+#[test]
+fn u65_bool_literal_conversion() {
+    let src = r#"print(1 == 1)
+print(1 == true)
+print(1 != false)
+print(false)"#;
+    let r = transpile(src, "u65.wrm").unwrap();
+    assert!(r.contains("print(1 == 1)"));
+}
+
+#[test]
+fn u66_public_function_with_doc_comment() {
+    let src = r#"
+public class Utility {
+    public function add(a: number, b: number) {
+        return a + b
+    }
+}
+local u = Utility.new()
+print(u.add(3, 4))"#;
+    let r = transpile(src, "u66.wrm").unwrap();
+    assert!(r.contains("Utility"));
+    assert!(r.contains("return a + b"));
+}
+
+#[test]
+fn u67_member_chain_with_method_call() {
+    let src = r#"local parent = part.Parent:FindFirstChild("Handle")
+if (parent) {
+    parent.Transparency = 0.5
+}"#;
+    let r = transpile(src, "u67.wrm").unwrap();
+    assert!(r.contains("local parent = part.Parent:FindFirstChild(\"Handle\")"));
+}
+
+#[test]
+fn u68_tween_service_create_with_type() {
+    let src = r#"local tween: Tween = TweenService:Create(obj, info, {Value = 1})
+tween:Play()
+tween:Cancel()"#;
+    let r = transpile(src, "u68.wrm").unwrap();
+    assert!(r.contains("local tween = TweenService:Create(obj, info, {"));
+    assert!(r.contains("tween:Play()"));
+    assert!(r.contains("tween:Cancel()"));
+}
+
+#[test]
+fn u69_signal_connection_with_callback() {
+    let src = r#"local player: Player = Players.LocalPlayer
+player.CharacterAdded:Connect(function(character: Model) {
+    print(character.Name)
+})"#;
+    let r = transpile(src, "u69.wrm").unwrap();
+    assert!(r.contains("player.CharacterAdded:Connect(function(character)"));
+    assert!(!r.contains(": Player"));
+    assert!(!r.contains(": Model"));
+}
+
+#[test]
+fn u70_enum_dot_chain_in_assignment() {
+    let src = r#"local params = OverlapParams.new()
+params.FilterType = Enum.RaycastFilterType.Include
+params.CollisionGroup = "Players""#;
+    let r = transpile(src, "u70.wrm").unwrap();
+    assert!(r.contains("Enum.RaycastFilterType.Include"));
+    assert!(r.contains("params.CollisionGroup"));
+}
+
+#[test]
+fn u71_for_in_over_direct_array_literal() {
+    let src = r#"for item in {1, 2, 3, 4} {
+    print(item)
+}"#;
+    let r = transpile(src, "u71.wrm").unwrap();
+    assert!(r.contains("for"));
+    assert!(r.contains("print(item)"));
+}
+
+#[test]
+fn u72_range_for_with_step() {
+    let src = r#"for i in range(0, 10, 2) {
+    print(i)
+}"#;
+    let r = transpile(src, "u72.wrm").unwrap();
+    assert!(r.contains("for i = 0, 10 - 1, 2 do"));
+}
+
+#[test]
+fn u73_range_for_two_args() {
+    let src = r#"for i in range(5, 15) {
+    print(i)
+}"#;
+    let r = transpile(src, "u73.wrm").unwrap();
+    assert!(r.contains("for i = 5, 15 - 1 do"));
+}
+
+#[test]
+fn u74_range_for_single_arg() {
+    let src = r#"for i in range(10) {
+    print(i)
+}"#;
+    let r = transpile(src, "u74.wrm").unwrap();
+    assert!(r.contains("for i = 0, 10 - 1 do"));
+}
+
+#[test]
+fn u75_table_literal_with_mixed_keys() {
+    let src = r#"local config = {
+    name = "test",
+    {x = 1, y = 2},
+    count = 3
+}
+print(config.name)"#;
+    let r = transpile(src, "u75.wrm").unwrap();
+    assert!(r.contains("config = {"));
+    assert!(r.contains("name = \"test\""));
+    assert!(r.contains("print(config.name)"));
+}
+
+#[test]
+fn u76_nil_value_in_table() {
+    let src = r#"local t = {a = 1, b = nil}
+t.b = 2"#;
+    let r = transpile(src, "u76.wrm").unwrap();
+    assert!(r.contains("t.b = 2"));
+}
+
+#[test]
+fn u77_logical_or_with_nil_guard() {
+    let src = r#"local name = player.Name or "Unknown"
+local age = config.age or 0"#;
+    let r = transpile(src, "u77.wrm").unwrap();
+    assert!(r.contains("player.Name or \"Unknown\""));
+    assert!(r.contains("config.age or 0"));
+}
+
+#[test]
+fn u78_nested_function_with_capture() {
+    let src = r#"local function outer(x) {
+    local function inner(y) {
+        return x + y
+    }
+    return inner(10)
+}"#;
+    let r = transpile(src, "u78.wrm").unwrap();
+    assert!(r.contains("function outer(x)"));
+    assert!(r.contains("function inner(y)"));
+}
+
+#[test]
+fn u79_string_concat_with_variable() {
+    let src = r#"local prefix = "Hello"
+local msg = prefix + " " + "World"
+print(msg)"#;
+    let r = transpile(src, "u79.wrm").unwrap();
+    assert!(r.contains("prefix"));
+    assert!(r.contains("\"World\""));
+}
+
+#[test]
+fn u80_method_call_return_assignment() {
+    let src = r#"local parts = CollectionService:GetTagged("zone")
+local first = parts[1]
+if (first) {
+    first.BrickColor = BrickColor.new("Bright red")
+}"#;
+    let r = transpile(src, "u80.wrm").unwrap();
+    assert!(r.contains("CollectionService:GetTagged("));
+    assert!(r.contains("BrickColor.new("));
 }

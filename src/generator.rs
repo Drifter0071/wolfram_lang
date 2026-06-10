@@ -141,7 +141,14 @@ fn infer_expr_type(expr: &Expr, ctx: &GenContext) -> InferredType {
         Expr::UnaryMinus(inner) => infer_expr_type(inner, ctx),
         Expr::Binary { .. } => InferredType::Unknown,
         Expr::Call { .. } => InferredType::Unknown,
-        Expr::MethodCall { .. } => InferredType::Unknown,
+        Expr::MethodCall { field, .. } => {
+            match field.as_str() {
+                "GetTagged" | "GetChildren" | "GetDescendants" | "GetPlayers" | "GetPartsInPart" => {
+                    InferredType::Array(Box::new(InferredType::Instance))
+                }
+                _ => InferredType::Unknown,
+            }
+        }
         Expr::Member { .. } => InferredType::Unknown,
         Expr::Index { .. } => InferredType::Unknown,
         Expr::SelfExpr => InferredType::Unknown,
@@ -215,7 +222,7 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
             format!(
                 "{}{}{}{}\n",
                 ind,
-                generate_expr_lvalue(target, ctx),
+                generate_expr(target, ctx),
                 assign_op,
                 generate_expr(value, ctx)
             )
@@ -661,50 +668,8 @@ fn generate_stmt(stmt: &Stmt, indent: usize, ctx: &mut GenContext) -> String {
     }
 }
 
-fn is_simple_chain_root(expr: &Expr) -> bool {
-    matches!(expr, Expr::Ident(_) | Expr::SelfExpr | Expr::Member { .. })
-}
-
-fn chain_root_is_self(expr: &Expr) -> bool {
-    match expr {
-        Expr::SelfExpr => true,
-        Expr::Member { obj, .. } => chain_root_is_self(obj),
-        _ => false,
-    }
-}
-
-fn generate_safe_member_chain(expr: &Expr, ctx: &GenContext) -> String {
-    fn collect_member_parts(expr: &Expr, ctx: &GenContext) -> (Vec<String>, String) {
-        match expr {
-            Expr::Member {
-                obj,
-                field,
-                is_colon,
-            } => {
-                let (mut parts, root) = collect_member_parts(obj, ctx);
-                if field == "length" && !is_colon {
-                    let last_idx = parts.len() - 1;
-                    parts[last_idx] = format!("#{}", parts[last_idx]);
-                } else {
-                    let sep = if *is_colon { ":" } else { "." };
-                    let last = parts.last().unwrap().clone();
-                    parts.push(format!("{}{}{}", last, sep, field));
-                }
-                (parts, root)
-            }
-            _ => {
-                let root = generate_expr(expr, ctx);
-                (vec![root], String::new())
-            }
-        }
-    }
-
-    let (parts, _) = collect_member_parts(expr, ctx);
-    format!("({})", parts.join(" and "))
-}
-
 fn generate_expr(expr: &Expr, ctx: &GenContext) -> String {
-    generate_expr_impl(expr, ctx, true)
+    generate_expr_impl(expr, ctx)
 }
 
 fn process_fstring_interpolations(raw: &str, ctx: &GenContext) -> String {
@@ -743,7 +708,7 @@ fn process_fstring_interpolations(raw: &str, ctx: &GenContext) -> String {
                 match crate::parser::parse_expr_str(&expr_str) {
                     Ok(parsed) => {
                         result.push('{');
-                        result.push_str(&generate_expr_impl(&parsed, ctx, false));
+                        result.push_str(&generate_expr_impl(&parsed, ctx));
                         result.push('}');
                     }
                     Err(_) => {
@@ -762,11 +727,7 @@ fn process_fstring_interpolations(raw: &str, ctx: &GenContext) -> String {
     result
 }
 
-fn generate_expr_lvalue(expr: &Expr, ctx: &GenContext) -> String {
-    generate_expr_impl(expr, ctx, false)
-}
-
-fn generate_expr_impl(expr: &Expr, ctx: &GenContext, safe_chain: bool) -> String {
+fn generate_expr_impl(expr: &Expr, ctx: &GenContext) -> String {
     match expr {
         Expr::Number(n) => n.to_string(),
         Expr::Str(s) => s.clone(),
@@ -860,7 +821,7 @@ fn generate_expr_impl(expr: &Expr, ctx: &GenContext, safe_chain: bool) -> String
             is_colon,
         } => {
             if field == "length" && !is_colon {
-                let inner = generate_expr_impl(obj, ctx, safe_chain);
+                let inner = generate_expr_impl(obj, ctx);
                 return format!("#{}", inner);
             }
             if let Some(class_name) = &ctx.class_name {
@@ -868,18 +829,15 @@ fn generate_expr_impl(expr: &Expr, ctx: &GenContext, safe_chain: bool) -> String
                     return format!(
                         "__private_{}[{}].{}",
                         class_name,
-                        generate_expr_impl(obj, ctx, safe_chain),
+                        generate_expr_impl(obj, ctx),
                         field
                     );
                 }
             }
-            if safe_chain && matches!(&**obj, Expr::Member { .. }) && is_simple_chain_root(obj) && !chain_root_is_self(obj) {
-                return generate_safe_member_chain(expr, ctx);
-            }
             let sep = if *is_colon { ":" } else { "." };
             format!(
                 "{}{}{}",
-                generate_expr_impl(obj, ctx, safe_chain),
+                generate_expr_impl(obj, ctx),
                 sep,
                 field
             )

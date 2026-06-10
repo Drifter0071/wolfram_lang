@@ -141,6 +141,10 @@ const BUILTINS = new Set([
     "Lighting", "SoundService", "UserInputService",
     "RunService", "ContextActionService", "debris",
     "PluginManager", "settings",
+    "OverlapParams", "RaycastParams", "RaycastResult",
+    "NumberRange", "NumberSequence", "ColorSequence",
+    "PhysicalProperties", "Faces", "Axes", "Rect",
+    "Random", "PathWaypoint", "DockWidgetPluginGuiInfo",
 ]);
 
 /**

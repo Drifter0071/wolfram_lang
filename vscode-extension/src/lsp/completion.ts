@@ -8,6 +8,7 @@ import { parseSource } from "./parser";
 import {
     getLinePrefix, extractExprBeforeDot,
     isComment, isInsideString, isValuePosition, isInsideImportString, collectProjectWrmFiles,
+    matchScore,
 } from "./utils";
 
 interface KeywordDef { label: string; snippet?: string; doc: string; }
@@ -48,7 +49,7 @@ function detectContext(linePrefix: string): Ctx {
     if (defMatch) return Ctx.STATEMENT_START;
     const lastChar = linePrefix[linePrefix.length - 1] ?? "";
     if (lastChar === "." || lastChar === ":") {
-        if (/Enum\.$/.test(trimmed)) return Ctx.ENUM_VALUE;
+        if (/Enum\.\w*\.$/.test(trimmed)) return Ctx.ENUM_VALUE;
         return Ctx.DOT_COLON;
     }
     const wordMatch = trimmed.match(/([\w.]+)$/);
@@ -114,6 +115,9 @@ function resolveChainedType(prefix: string, bindings: Bindings, scope: Map<strin
         const methods = bindings.getAllMethods(current);
         const m = methods.find(x => x.name.toLowerCase() === seg.toLowerCase());
         if (m) { current = m.returns; continue; }
+        const events = bindings.getAllEvents(current);
+        const ev = events.find(x => x.name.toLowerCase() === seg.toLowerCase());
+        if (ev) { current = "RBXScriptSignal"; continue; }
         if (current === "Instance" || bindings.getType("Instance")?.extends) {
             return "Instance";
         }
@@ -144,9 +148,33 @@ function buildEnrichedScope(source: string, bindings: Bindings): Map<string, str
         scope.set(m[1], typeName ?? m[2]);
     }
 
+    // local name: Type — explicit type annotations take priority
+    const typeRe = /local\s+(\w+)\s*:\s*(\w+(\[\])?)/g;
+    while ((m = typeRe.exec(source)) !== null) scope.set(m[1], m[2]);
+
+    // function name(param: Type, ...)  — capture param types 
+    const paramTypeRe = /function\s+\w+\s*\(/g;
+    while ((m = paramTypeRe.exec(source)) !== null) {
+        const parenStart = m.index + m[0].length;
+        const paramStr = source.substring(parenStart, source.indexOf(")", parenStart));
+        const paramParts = paramStr.split(",");
+        for (const part of paramParts) {
+            const pm = part.trim().match(/^(\w+)\s*:\s*(\w+(\[\])?)/);
+            if (pm) scope.set(pm[1], pm[2]);
+        }
+    }
+
     // local name = expr:GetService("ServiceName")
     const svcRe = /local\s+(\w+)\s*=.*:GetService\s*\(\s*"([^"]+)"/g;
     while ((m = svcRe.exec(source)) !== null) scope.set(m[1], m[2]);
+
+    // local name = Service:Create(...) / Service:method(...) — resolve return type
+    const methodRe = /local\s+(\w+)\s*=\s*(\w+):(\w+)\s*\(/g;
+    while ((m = methodRe.exec(source)) !== null) {
+        if (scope.has(m[1])) continue;
+        const ret = bindings.getMethodReturn(m[2], m[3]);
+        if (ret && ret !== "null") scope.set(m[1], ret);
+    }
 
     // local name = Expr.Chain — resolve through bindings
     const chainRe = /local\s+(\w+)\s*=\s*([\w.]+)(?!\()/g;
@@ -204,7 +232,23 @@ export function handleCompletion(
         return items;
     }
 
-    if (ctx === Ctx.DEFINITION_NAME || ctx === Ctx.COMMENT || ctx === Ctx.STRING) return [];
+    if (ctx === Ctx.DEFINITION_NAME || ctx === Ctx.COMMENT || ctx === Ctx.STRING) {
+        // GetService("...") string argument — suggest service names
+        const gsMatch = linePrefix.match(/(\w+):GetService\s*\(\s*["']([^"']*)$/);
+        if (gsMatch) {
+            const partial = gsMatch[2].toLowerCase();
+            const serviceItems: CompletionItem[] = [];
+            for (const [, t] of bindings.types) {
+                if (t.tags?.includes("service") || /[Ss]ervice$/.test(t.name)) {
+                    if (t.name.toLowerCase().startsWith(partial) || !partial) {
+                        serviceItems.push({ label: t.name, kind: CompletionItemKind.Class, sortText: "2" + t.name });
+                    }
+                }
+            }
+            if (serviceItems.length > 0) return serviceItems;
+        }
+        return [];
+    }
 
     // Dot/colon member access — uses type chaining
     if (ctx === Ctx.DOT_COLON) {
@@ -274,6 +318,11 @@ export function handleCompletion(
                         documentation: m.description ? { kind: MarkupKind.Markdown, value: m.description } : undefined,
                     });
                 }
+                if (typeName === "RBXScriptSignal") {
+                    push({ label: "Wait", kind: CompletionItemKind.Method, detail: "(): any", sortText: "2Wait", insertText: "Wait()", insertTextFormat: InsertTextFormat.PlainText });
+                    push({ label: "Connect", kind: CompletionItemKind.Method, detail: "(callback: function): RBXScriptConnection", sortText: "2Connect", insertText: "Connect(${1:callback})", insertTextFormat: InsertTextFormat.Snippet });
+                    push({ label: "Once", kind: CompletionItemKind.Method, detail: "(callback: function): void", sortText: "2Once", insertText: "Once(${1:callback})", insertTextFormat: InsertTextFormat.Snippet });
+                }
             } else {
                 for (const p of bindings.getAllProperties(typeName)) {
                     push({
@@ -281,6 +330,14 @@ export function handleCompletion(
                         detail: `${p.type}${p.rw ? " (read/write)" : " (read-only)"}`,
                         sortText: "3" + p.name,
                         documentation: p.description ? { kind: MarkupKind.Markdown, value: p.description } : undefined,
+                    });
+                }
+                for (const e of bindings.getAllEvents(typeName)) {
+                    push({
+                        label: e.name, kind: CompletionItemKind.Event,
+                        detail: "RBXScriptSignal — event",
+                        sortText: "3" + e.name,
+                        documentation: e.description ? { kind: MarkupKind.Markdown, value: e.description } : undefined,
                     });
                 }
                 for (const m of bindings.getAllMethods(typeName)) {
@@ -305,62 +362,69 @@ export function handleCompletion(
     const wp = (fullLine.match(/([\w.]+)$/) ?? [""])[0].toLowerCase();
     const scope = buildEnrichedScope(document.getText(), bindings);
 
+    function ms(label: string): number { return matchScore(label, wp); }
+
     // Locals
     for (const [name, type] of scope) {
-        if (name.toLowerCase().startsWith(wp)) {
-            push({
-                label: name, kind: CompletionItemKind.Variable,
-                detail: type !== "any" && type !== "local" && type !== name ? type : undefined,
-                sortText: "1" + name,
-            });
-        }
+        const score = ms(name);
+        if (score < 0) continue;
+        const prefix = score <= 1 ? "1" : "3";
+        push({
+            label: name, kind: CompletionItemKind.Variable,
+            detail: type !== "any" && type !== "local" && type !== name ? type : undefined,
+            sortText: prefix + name,
+        });
     }
 
     // Keywords
     if (ctx === Ctx.STATEMENT_START) {
         for (const kw of STRUCT_KW) {
-            if (kw.label.startsWith(wp)) {
-                const item: CompletionItem = { label: kw.label, kind: CompletionItemKind.Keyword, sortText: "0" + kw.label };
-                if (kw.snippet) { item.insertText = kw.snippet; item.insertTextFormat = InsertTextFormat.Snippet; }
-                push(item);
-            }
+            const score = ms(kw.label);
+            if (score < 0) continue;
+            const prefix = score <= 1 ? "0" : "2";
+            const item: CompletionItem = { label: kw.label, kind: CompletionItemKind.Keyword, sortText: prefix + kw.label };
+            if (kw.snippet) { item.insertText = kw.snippet; item.insertTextFormat = InsertTextFormat.Snippet; }
+            push(item);
         }
     }
 
     if (ctx === Ctx.VALUE_EXPRESSION || ctx === Ctx.EXPRESSION || ctx === Ctx.STATEMENT_START) {
         for (const [, g] of bindings.globals) {
-            if (g.name.toLowerCase().startsWith(wp)) {
-                push({ label: g.name, kind: CompletionItemKind.Variable, detail: `${g.type} — ${g.description}`, sortText: "2" + g.name });
-            }
+            const score = ms(g.name);
+            if (score < 0) continue;
+            const prefix = score <= 1 ? "2" : "4";
+            push({ label: g.name, kind: CompletionItemKind.Variable, detail: `${g.type} — ${g.description}`, sortText: prefix + g.name });
         }
         for (const [, f] of bindings.functions) {
-            if (f.name.toLowerCase().startsWith(wp)) {
-                const params = f.params.map(p => `${p.name}: ${p.type}`).join(", ");
-                push({
-                    label: f.name, kind: CompletionItemKind.Function,
-                    detail: `(${params}): ${f.returns}`,
-                    insertText: f.params.length > 0 ? `${f.name}(${f.params.map((p, i) => `\${${i + 1}:${p.name}}`).join(", ")})` : f.name,
-                    insertTextFormat: f.params.length > 0 ? InsertTextFormat.Snippet : InsertTextFormat.PlainText,
-                    sortText: "2" + f.name,
-                    documentation: f.description ? { kind: MarkupKind.Markdown, value: f.description } : undefined,
-                });
-            }
+            const score = ms(f.name);
+            if (score < 0) continue;
+            const prefix = score <= 1 ? "2" : "4";
+            const params = f.params.map(p => `${p.name}: ${p.type}`).join(", ");
+            push({
+                label: f.name, kind: CompletionItemKind.Function,
+                detail: `(${params}): ${f.returns}`,
+                insertText: f.params.length > 0 ? `${f.name}(${f.params.map((p, i) => `\${${i + 1}:${p.name}}`).join(", ")})` : f.name,
+                insertTextFormat: f.params.length > 0 ? InsertTextFormat.Snippet : InsertTextFormat.PlainText,
+                sortText: prefix + f.name,
+                documentation: f.description ? { kind: MarkupKind.Markdown, value: f.description } : undefined,
+            });
         }
         for (const [, t] of bindings.types) {
-            if (t.name.toLowerCase().startsWith(wp)) {
-                push({
-                    label: t.name, kind: CompletionItemKind.Class,
-                    detail: t.description || "Roblox type",
-                    sortText: "2" + t.name,
-                    documentation: t.methods.length > 0 ? {
-                        kind: MarkupKind.Markdown,
-                        value: `**${t.name}**\n\n${t.methods.map(m => {
-                            const params = m.params.map(p => `${p.name}: ${p.type}`).join(", ");
-                            return `- \`${m.name}(${params})${m.returns ? " → " + m.returns : ""}\``;
-                        }).join("\n")}`,
-                    } : undefined,
-                });
-            }
+            const score = ms(t.name);
+            if (score < 0) continue;
+            const prefix = score <= 1 ? "2" : "4";
+            push({
+                label: t.name, kind: CompletionItemKind.Class,
+                detail: t.description || "Roblox type",
+                sortText: prefix + t.name,
+                documentation: t.methods.length > 0 ? {
+                    kind: MarkupKind.Markdown,
+                    value: `**${t.name}**\n\n${t.methods.map(m => {
+                        const params = m.params.map(p => `${p.name}: ${p.type}`).join(", ");
+                        return `- \`${m.name}(${params})${m.returns ? " → " + m.returns : ""}\``;
+                    }).join("\n")}`,
+                } : undefined,
+            });
         }
     }
 
@@ -371,31 +435,41 @@ export function handleCompletion(
                 for (const itemName of en.items) {
                     const full = `Enum.${en.name}.${itemName}`;
                     if (full.toLowerCase().startsWith(wp)) {
-                        push({ label: full, kind: CompletionItemKind.EnumMember, detail: en.name, sortText: "3" + full });
+                        push({
+                            label: full, kind: CompletionItemKind.EnumMember,
+                            detail: en.name, sortText: "3" + full,
+                            insertText: itemName,
+                            insertTextFormat: InsertTextFormat.PlainText,
+                        });
                     }
                 }
             }
         } else {
             for (const [, en] of bindings.enums) {
-                if (en.name.toLowerCase().startsWith(wp)) {
-                    push({ label: `Enum.${en.name}`, kind: CompletionItemKind.Enum, detail: en.items.join(", "), sortText: "3Enum." + en.name });
-                }
+                const score = ms(en.name);
+                if (score < 0) continue;
+                const prefix = score <= 1 ? "3" : "5";
+                push({ label: `Enum.${en.name}`, kind: CompletionItemKind.Enum, detail: en.items.join(", "), sortText: prefix + "Enum." + en.name });
             }
         }
     }
 
     if (ctx === Ctx.EXPRESSION || ctx === Ctx.STATEMENT_START) {
         for (const kw of STRUCT_KW) {
-            if (kw.label.startsWith(wp)) {
-                const item: CompletionItem = {
-                    label: kw.label, kind: CompletionItemKind.Keyword, sortText: "0" + kw.label,
-                    insertText: kw.snippet, insertTextFormat: kw.snippet ? InsertTextFormat.Snippet : InsertTextFormat.PlainText,
-                };
-                push(item);
-            }
+            const score = ms(kw.label);
+            if (score < 0) continue;
+            const prefix = score <= 1 ? "0" : "2";
+            const item: CompletionItem = {
+                label: kw.label, kind: CompletionItemKind.Keyword, sortText: prefix + kw.label,
+                insertText: kw.snippet, insertTextFormat: kw.snippet ? InsertTextFormat.Snippet : InsertTextFormat.PlainText,
+            };
+            push(item);
         }
         for (const kw of VALUE_KW) {
-            if (kw.label.startsWith(wp)) push({ label: kw.label, kind: CompletionItemKind.Keyword, sortText: "0" + kw.label });
+            const score = ms(kw.label);
+            if (score < 0) continue;
+            const prefix = score <= 1 ? "0" : "2";
+            push({ label: kw.label, kind: CompletionItemKind.Keyword, sortText: prefix + kw.label });
         }
     }
 

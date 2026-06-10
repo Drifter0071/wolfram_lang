@@ -99,6 +99,7 @@ pub enum Stmt {
         name: String,
         value: Option<Expr>,
         access: String,
+        type_annotation: Option<String>,
         #[serde(skip)]
         span: Span,
     },
@@ -132,6 +133,7 @@ pub enum Stmt {
         var: String,
         iter: Expr,
         block: Vec<Stmt>,
+        type_annotation: Option<String>,
         #[serde(skip)]
         span: Span,
     },
@@ -143,6 +145,7 @@ pub enum Stmt {
         block: Vec<Stmt>,
         access: String,
         is_async: bool,
+        return_type: Option<String>,
         #[serde(skip)]
         span: Span,
     },

@@ -75,6 +75,22 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_type_annotation(&mut self) -> Result<String, String> {
+        let name = match self.advance() {
+            Some(Token::Ident(n)) => n,
+            _ => return Err(self.err_msg("Expected type name")),
+        };
+        if self.peek() == Some(&Token::LBracket) && self.peek_ahead(1) == Some(&Token::RBracket) {
+            self.advance(); self.advance();
+            return Ok(format!("{}[]", name));
+        }
+        Ok(name)
+    }
+
+    fn peek_ahead(&self, n: usize) -> Option<&Token> {
+        self.tokens.get(self.pos + n)
+    }
+
     fn is_stmt_start(tok: Option<&Token>) -> bool {
         matches!(
             tok,
@@ -253,6 +269,12 @@ impl<'a> Parser<'a> {
         }
         let joined = var_names.join(", ");
 
+        let mut type_annotation = None;
+        if self.peek() == Some(&Token::Colon) {
+            self.advance();
+            type_annotation = self.parse_type_annotation().ok();
+        }
+
         let mut value = None;
         if self.peek() == Some(&Token::Assign) {
             self.advance();
@@ -263,6 +285,7 @@ impl<'a> Parser<'a> {
             name: joined,
             value,
             access: "private".into(),
+            type_annotation,
             span: self.current_span(),
         })
     }
@@ -286,6 +309,7 @@ impl<'a> Parser<'a> {
             block,
             access: "private".into(),
             is_async: false,
+            return_type: None,
             span: self.current_span(),
         })
     }
@@ -355,6 +379,7 @@ impl<'a> Parser<'a> {
             Some(Token::Ident(n)) => n,
             _ => return Err(self.err_msg("Expected variable name in for loop")),
         };
+        let mut type_annotation = None;
         // Support `for k, v in iter` multi-variable for-in
         if self.peek() == Some(&Token::Comma) {
             self.advance(); // consume comma
@@ -363,6 +388,10 @@ impl<'a> Parser<'a> {
                 _ => return Err(self.err_msg("Expected second variable name after comma in for loop")),
             };
         }
+        if self.peek() == Some(&Token::Colon) {
+            self.advance();
+            type_annotation = self.parse_type_annotation().ok();
+        }
         self.expect(Token::In)?;
         let iter = self.parse_expr()?;
         let block = self.parse_block()?;
@@ -370,6 +399,7 @@ impl<'a> Parser<'a> {
             var,
             iter,
             block,
+            type_annotation,
             span: self.current_span(),
         })
     }
@@ -415,6 +445,7 @@ impl<'a> Parser<'a> {
             block,
             access: "private".into(),
             is_async,
+            return_type: None,
             span: self.current_span(),
         })
     }
@@ -1104,19 +1135,4 @@ pub fn parse_expr_str(source: &str) -> Result<Expr, String> {
         return Err("unexpected tokens after expression".into());
     }
     Ok(expr)
-}
-
-// Incremental parse entry point.
-// For now, does a full reparse. The change_range is tracked for future
-// optimization where only the affected region is re-parsed and stitched.
-pub fn parse_incremental(
-    tokens: Vec<Token>,
-    spans: Vec<usize>,
-    source: &str,
-    _change_start: Option<usize>,
-    _change_end: Option<usize>,
-    _existing_ast: Option<&[Stmt]>,
-) -> Result<Vec<Stmt>, String> {
-    let mut parser = Parser::new(tokens, spans, source);
-    parser.parse_program()
 }

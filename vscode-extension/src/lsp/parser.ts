@@ -246,10 +246,35 @@ class Parser {
         throw new Error(`${this.posString()}: expected ${type}, found ${t?.type ?? "EOF"}`);
     }
 
+    private parseTypeAnnotation(): string | null {
+        const t = this.peek();
+        if (!t || t.type !== "IDENT") return null;
+        const typeName = this.expect("IDENT").value;
+
+        if (this.peek()?.type === "LBRACKET" && this.peekAhead(1)?.type === "RBRACKET") {
+            this.advance(); this.advance();
+            return typeName + "[]";
+        }
+        if (this.peek()?.type === "LBRACE" && this.peekAhead(1)?.type === "LBRACKET") {
+            this.advance(); this.advance();
+            const keyType = this.expect("IDENT").value;
+            this.expect("RBRACKET");
+            this.expect("COLON");
+            const valType = this.expect("IDENT").value;
+            this.expect("RBRACE");
+            return `{[${keyType}]: ${valType}}`;
+        }
+        return typeName;
+    }
+
+    private peekAhead(n: number): Token | null {
+        return (this.pos + n < this.tokens.length) ? this.tokens[this.pos + n] : null;
+    }
+
     private expectIdentOrSelf(): Token {
         const t = this.peek();
-        if (t && (t.type === "IDENT" || t.type === "SELF")) return this.advance()!;
-        throw new Error(`${this.posString()}: expected identifier or self, found ${t?.type ?? "EOF"}`);
+        if (t?.type === "SELF") return this.advance()!;
+        return this.expect("IDENT");
     }
 
     private currentSpan(): Span {
@@ -302,7 +327,20 @@ class Parser {
             const n = this.expect("IDENT");
             names.push(n.value);
         }
+        const typeAnnotations: (string | null)[] = names.map(() => null);
+
         let value: Expr | null = null;
+
+        if (this.peek()?.type === "COLON") {
+            this.advance();
+            for (let i = 0; i < names.length; i++) {
+                const typeName = this.parseTypeAnnotation();
+                typeAnnotations[i] = typeName;
+                if (i < names.length - 1 && this.peek()?.type === "COMMA") {
+                    this.advance();
+                }
+            }
+        }
 
         if (this.peek()?.type === "ASSIGN") {
             this.advance();
@@ -310,7 +348,8 @@ class Parser {
         }
         this.semicolonOrEnd();
 
-        for (const n of names) {
+        for (let i = 0; i < names.length; i++) {
+            const n = names[i];
             this.symbols.push({
                 name: n, kind: "variable", access: "private",
                 location: { line: 0, column: 0, endLine: 0, endColumn: 0 },
@@ -318,11 +357,15 @@ class Parser {
             });
 
             let varType = "any";
-            if (value) varType = this.inferExprType(value);
+            if (typeAnnotations[i]) {
+                varType = typeAnnotations[i]!;
+            } else if (value) {
+                varType = this.inferExprType(value);
+            }
             this.scope.set(n, varType);
         }
 
-        return { kind: "Local", names, value, access: "private", span: this.currentSpan() };
+        return { kind: "Local", names, value, access: "private", span: this.currentSpan(), typeAnnotations };
     }
 
     private parseLocalFunction(): Stmt {
@@ -344,7 +387,7 @@ class Parser {
             params, fields: [],
         });
         for (const p of params) this.scope.set(p, "any");
-        return { kind: "FuncDef", name, params, paramTypes, paramDefaults, block, access: "private", isAsync: false, span: this.currentSpan() };
+        return { kind: "FuncDef", name, params, paramTypes, paramDefaults, block, access: "private", isAsync: false, span: this.currentSpan(), returnType: null };
     }
 
     private parseIf(): Stmt {
@@ -399,16 +442,32 @@ class Parser {
         this.expect("FOR");
         const varTok = this.expect("IDENT");
         const vars = [varTok.value];
+        const typeAnnotations: (string | null)[] = [];
         if (this.peek()?.type === "COMMA") {
             this.advance();
             const v2 = this.expect("IDENT");
             vars.push(v2.value);
+            typeAnnotations.push(null);
+        }
+        if (this.peek()?.type === "COLON") {
+            this.advance();
+            typeAnnotations[0] = this.parseTypeAnnotation();
+            if (this.peek()?.type === "COMMA") {
+                this.advance();
+                const t = this.peek();
+                if (t?.type === "IDENT") {
+                    this.advance();
+                    typeAnnotations[1] = "any";
+                }
+            }
         }
         this.expect("IN");
         const iter = this.parseExpr();
         const block = this.parseBlock();
-        for (const v of vars) this.scope.set(v, "any");
-        return { kind: "For", vars, iter, block, span: this.currentSpan() };
+        for (let i = 0; i < vars.length; i++) {
+            this.scope.set(vars[i], typeAnnotations[i] || "any");
+        }
+        return { kind: "For", vars, iter, block, span: this.currentSpan(), typeAnnotations };
     }
 
     private parseReturn(): Stmt {
@@ -444,6 +503,11 @@ class Parser {
         const paramDefaults: (Expr | null)[] = [];
         this.parseParamList(params, paramTypes, paramDefaults);
         this.expect("RPAREN");
+        let returnType: string | null = null;
+        if (this.peek()?.type === "COLON") {
+            this.advance();
+            returnType = this.parseTypeAnnotation();
+        }
         const block = this.parseBlock();
         this.scope.set(name, "function");
         this.symbols.push({
@@ -451,20 +515,21 @@ class Parser {
             location: { line: 0, column: 0, endLine: 0, endColumn: 0 },
             params, fields: [],
         });
-        for (const p of params) this.scope.set(p, "any");
-        return { kind: "FuncDef", name, params, paramTypes, paramDefaults, block, access: "private", isAsync, span: this.currentSpan() };
+        for (let i = 0; i < params.length; i++) {
+            this.scope.set(params[i], paramTypes[i] || "any");
+        }
+        return { kind: "FuncDef", name, params, paramTypes, paramDefaults, block, access: "private", isAsync, span: this.currentSpan(), returnType };
     }
 
     private parseParamList(params: string[], paramTypes: (string | null)[], defaults: (Expr | null)[]): void {
         if (!this.peek() || this.peek()!.type === "RPAREN") return;
-        // Parse first param
         const first = this.expectIdentOrSelf();
         params.push(first.value);
         let ptype: string | null = null;
         let def: Expr | null = null;
         if (this.peek()?.type === "COLON") {
             this.advance();
-            ptype = this.expect("IDENT").value;
+            ptype = this.parseTypeAnnotation();
         }
         if (this.peek()?.type === "ASSIGN") {
             this.advance();
@@ -481,7 +546,7 @@ class Parser {
             params.push(p.value);
             let pt: string | null = null;
             let d: Expr | null = null;
-            if (this.peek()?.type === "COLON") { this.advance(); pt = this.expect("IDENT").value; }
+            if (this.peek()?.type === "COLON") { this.advance(); pt = this.parseTypeAnnotation(); }
             if (this.peek()?.type === "ASSIGN") { this.advance(); d = this.parseExpr(); }
             paramTypes.push(pt);
             defaults.push(d);
@@ -494,7 +559,7 @@ class Parser {
         const body = this.parseBlock();
         this.scope.set(name, "class");
         this.symbols.push({ name, kind: "class", access: "private", location: { line: 0, column: 0, endLine: 0, endColumn: 0 }, params: [], fields: [] });
-        return { kind: "ClassDef", name, body, access: "private", span: this.currentSpan() };
+        return { kind: "ClassDef", name, body, access: "private", span: this.currentSpan(), extends: null };
     }
 
     private parseEnum(): Stmt {
@@ -525,14 +590,14 @@ class Parser {
             const fname = this.expect("IDENT").value;
             let ftype: string | null = null;
             if (this.peek()?.type === "COLON") { this.advance(); ftype = this.expect("IDENT").value; }
-            fields.push({ name: fname, fieldType: ftype });
+            fields.push({ name: fname, fieldType: ftype, typeAnnotation: null });
             while (this.peek()?.type === "COMMA") {
                 this.advance();
                 if (this.peek()?.type === "RBRACE") break;
                 const fn = this.expect("IDENT").value;
                 let ft: string | null = null;
                 if (this.peek()?.type === "COLON") { this.advance(); ft = this.expect("IDENT").value; }
-                fields.push({ name: fn, fieldType: ft });
+                fields.push({ name: fn, fieldType: ft, typeAnnotation: null });
             }
         }
         this.expect("RBRACE");
@@ -963,7 +1028,7 @@ export function inferExprType(expr: Expr): string {
         case "Array": return "array";
         case "Table": return "table";
         case "Call": {
-            const known = ["Vector3", "Vector2", "CFrame", "Color3", "UDim2", "UDim", "BrickColor", "TweenInfo", "Ray", "Region3", "DateTime", "Instance"];
+            const known = ["Vector3", "Vector2", "CFrame", "Color3", "UDim2", "UDim", "BrickColor", "TweenInfo", "Ray", "Region3", "DateTime", "Instance", "OverlapParams", "RaycastParams", "RaycastResult", "NumberRange", "NumberSequence", "ColorSequence", "PhysicalProperties", "Faces", "Axes", "Rect", "Random", "PathWaypoint", "DockWidgetPluginGuiInfo"];
             return known.includes(expr.func) ? expr.func : "any";
         }
         case "MethodCall": return expr.field === "GetService" ? "Instance" : "any";

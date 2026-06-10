@@ -1,12 +1,14 @@
 import * as fs from "fs";
 import * as path from "path";
+import { injectLuauDatatypes } from "../luau_datatypes";
 
 export interface WoldGlobal { name: string; type: string; description: string; }
 export interface WoldFunction { name: string; params: WoldParam[]; returns: string; description: string; }
 export interface WoldParam { name: string; type: string; }
 export interface WoldProperty { name: string; type: string; rw: boolean; description: string; }
 export interface WoldMethod { name: string; params: WoldParam[]; returns: string; description: string; }
-export interface WoldType { name: string; description: string; extends?: string | null; tags: string[]; properties: WoldProperty[]; methods: WoldMethod[]; events: any[]; }
+export interface WoldEvent { name: string; params: WoldParam[]; description: string; }
+export interface WoldType { name: string; description: string; extends?: string | null; tags: string[]; properties: WoldProperty[]; methods: WoldMethod[]; events: WoldEvent[]; }
 export interface WoldEnum { name: string; items: string[]; description: string; }
 export interface WoldFile { version: number; globals: WoldGlobal[]; functions: WoldFunction[]; types: WoldType[]; enums: WoldEnum[]; services: any[]; }
 
@@ -20,18 +22,19 @@ export class Bindings {
         const p = path.join(bindingsDir, "generated", "roblox.wold");
         if (!fs.existsSync(p)) {
             console.error("[wolfram-lsp] no roblox.wold at", p);
-            return;
+        } else {
+            try {
+                const raw = fs.readFileSync(p, "utf-8");
+                const file: WoldFile = JSON.parse(raw);
+                for (const g of file.globals) this.globals.set(g.name.toLowerCase(), g);
+                for (const f of file.functions) this.functions.set(f.name.toLowerCase(), f);
+                for (const t of file.types) this.types.set(t.name.toLowerCase(), t);
+                for (const e of file.enums) this.enums.set(e.name.toLowerCase(), e);
+            } catch (e: any) {
+                console.error("[wolfram-lsp] bindings load error:", e.message);
+            }
         }
-        try {
-            const raw = fs.readFileSync(p, "utf-8");
-            const file: WoldFile = JSON.parse(raw);
-            for (const g of file.globals) this.globals.set(g.name.toLowerCase(), g);
-            for (const f of file.functions) this.functions.set(f.name.toLowerCase(), f);
-            for (const t of file.types) this.types.set(t.name.toLowerCase(), t);
-            for (const e of file.enums) this.enums.set(e.name.toLowerCase(), e);
-        } catch (e: any) {
-            console.error("[wolfram-lsp] bindings load error:", e.message);
-        }
+        injectLuauDatatypes(this);
     }
 
     getType(name: string): WoldType | undefined { return this.types.get(name.toLowerCase()); }
@@ -54,6 +57,15 @@ export class Bindings {
         props.push(...t.properties);
         if (t.extends) props.push(...this.getAllProperties(t.extends));
         return props;
+    }
+
+    getAllEvents(typeName: string): WoldEvent[] {
+        const events: WoldEvent[] = [];
+        const t = this.getType(typeName);
+        if (!t) return events;
+        events.push(...t.events);
+        if (t.extends) events.push(...this.getAllEvents(t.extends));
+        return events;
     }
 
     getMethodReturn(typeName: string, methodName: string): string | undefined {

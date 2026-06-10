@@ -8,8 +8,8 @@ public struct Message {
 }
 
 public class Logger {
-    public function announce(player_name: string, text: string) {
-        local msg = Message.new(player_name, text)
+    public function announce(player_name: string, text: string): void {
+        local msg: Message = Message.new(player_name, text)
         print(f"📢  {msg.player}> {msg.text}")
     }
 }

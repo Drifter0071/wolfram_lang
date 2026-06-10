@@ -6,7 +6,7 @@ import "../shared/logger.shared" as Log
 
 local Players = game:GetService("Players")
 
-Players.PlayerAdded:Connect(function(player) {
+Players.PlayerAdded:Connect(function(player: Player) {
     Log.Logger:announce(player.Name, "joined the server")
 })
 

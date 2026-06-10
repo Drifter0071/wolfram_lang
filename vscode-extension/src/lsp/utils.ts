@@ -91,3 +91,18 @@ export function collectProjectWrmFiles(workspacePath: string): string[] {
 }
 
 import * as fs from "fs";
+
+/**
+ * Two-stage completion match score.
+ * Returns 0=exact, 1=prefix, 2=substring (min 2 chars), -1=no match.
+ * Used by both VSCode and LSP completion providers.
+ */
+export function matchScore(label: string, prefix: string): number {
+    if (!prefix) return 1;
+    const l = label.toLowerCase();
+    const p = prefix.toLowerCase();
+    if (l === p) return 0;
+    if (l.startsWith(p)) return 1;
+    if (p.length >= 2 && l.includes(p)) return 2;
+    return -1;
+}

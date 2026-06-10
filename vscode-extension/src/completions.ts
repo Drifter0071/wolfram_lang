@@ -1,6 +1,8 @@
 import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
+import { injectLuauDatatypes } from "./luau_datatypes";
+import { matchScore as sharedMatchScore } from "./lsp/utils";
 
 // ── Wold JSON types ──────────────────────────────────────
 
@@ -9,7 +11,8 @@ interface WoldFunction { name: string; params: WoldParam[]; returns: string; des
 interface WoldParam { name: string; type: string; }
 interface WoldProperty { name: string; type: string; rw: boolean; description: string; }
 interface WoldMethod { name: string; params: WoldParam[]; returns: string; description: string; }
-interface WoldType { name: string; description: string; extends?: string | null; tags: string[]; properties: WoldProperty[]; methods: WoldMethod[]; events: any[]; }
+interface WoldEvent { name: string; params: WoldParam[]; description: string; }
+interface WoldType { name: string; description: string; extends?: string | null; tags: string[]; properties: WoldProperty[]; methods: WoldMethod[]; events: WoldEvent[]; }
 interface WoldEnum { name: string; items: string[]; description: string; }
 interface WoldFile { version: number; globals: WoldGlobal[]; functions: WoldFunction[]; types: WoldType[]; enums: WoldEnum[]; services: any[]; }
 
@@ -50,6 +53,15 @@ class WoldBindings {
     if (t.extends) return this.getMethodReturn(t.extends, methodName);
     return undefined;
   }
+
+  getAllEvents(typeName: string): WoldEvent[] {
+    const events: WoldEvent[] = [];
+    const t = this.getType(typeName);
+    if (!t) return events;
+    events.push(...t.events);
+    if (t.extends) events.push(...this.getAllEvents(t.extends));
+    return events;
+  }
 }
 
 // ── Loader ───────────────────────────────────────────────
@@ -65,6 +77,7 @@ export function loadWoldBindings(extensionPath: string): WoldBindings {
     for (const f of file.functions) bindings.functions.set(f.name.toLowerCase(), f);
     for (const t of file.types) bindings.types.set(t.name.toLowerCase(), t);
     for (const e of file.enums) bindings.enums.set(e.name.toLowerCase(), e);
+    injectLuauDatatypes(bindings);
     console.log(`[wolfram] loaded ${bindings.globals.size} globals, ${bindings.functions.size} functions, ${bindings.types.size} types, ${bindings.enums.size} enums`);
   } catch (e: any) { console.error("[wolfram] failed to load bindings: " + e.message); }
   return bindings;
@@ -150,6 +163,24 @@ function extractLocalTypes(document: vscode.TextDocument, bindings: WoldBindings
   const typeRe = /(?:^|\s)(?:public\s+|private\s+)?(?:class|struct|enum)\s+(\w+)/gm;
   while ((m = typeRe.exec(text)) !== null) { if (!map.has(m[1])) map.set(m[1], m[1]); }
 
+  // local name: Type — explicit type annotations take priority
+  const typeAnnotRe = /local\s+(\w+)\s*:\s*(\w+(\[\])?)/g;
+  while ((m = typeAnnotRe.exec(text)) !== null) map.set(m[1], m[2]);
+
+  // function name(param: Type, ...) — capture param types
+  const paramTypeRe = /function\s+\w+\s*\(/g;
+  while ((m = paramTypeRe.exec(text)) !== null) {
+    const parenStart = m.index + m[0].length;
+    const closeIdx = text.indexOf(")", parenStart);
+    if (closeIdx < 0) continue;
+    const paramStr = text.substring(parenStart, closeIdx);
+    const paramParts = paramStr.split(",");
+    for (const part of paramParts) {
+      const pm = part.trim().match(/^(\w+)\s*:\s*(\w+(\[\])?)/);
+      if (pm) map.set(pm[1], pm[2]);
+    }
+  }
+
   // local name = ClassName.new(...)
   const newRe = /local\s+(\w+)\s*=\s*(\w+(?:\.\w+)*)\.new\s*\(/g;
   while ((m = newRe.exec(text)) !== null) map.set(m[1], m[2]);
@@ -157,6 +188,14 @@ function extractLocalTypes(document: vscode.TextDocument, bindings: WoldBindings
   // local name = expr:GetService("ServiceName")
   const svcRe = /local\s+(\w+)\s*=.*:GetService\s*\(\s*"([^"]+)"/g;
   while ((m = svcRe.exec(text)) !== null) map.set(m[1], m[2]);
+
+  // local name = Service:Create(...) / Service:method(...) — resolve return type
+  const methodRe = /local\s+(\w+)\s*=\s*(\w+):(\w+)\s*\(/g;
+  while ((m = methodRe.exec(text)) !== null) {
+    if (map.has(m[1])) continue;
+    const ret = bindings.getMethodReturn(m[2], m[3]);
+    if (ret && ret !== "null") map.set(m[1], ret);
+  }
 
   // local name = Chain.Of.Properties — resolve through bindings
   const chainRe = /local\s+(\w+)\s*=\s*([\w.]+)(?!\()/g;
@@ -264,7 +303,33 @@ function enumItem(e: WoldEnum): vscode.CompletionItem {
 function enumMemberItem(enumName: string, memberName: string): vscode.CompletionItem {
   const item = new vscode.CompletionItem(`Enum.${enumName}.${memberName}`, vscode.CompletionItemKind.EnumMember);
   item.sortText = "3" + enumName + "." + memberName;
+  item.insertText = memberName;
   return item;
+}
+
+function eventAsPropItem(e: WoldEvent): vscode.CompletionItem {
+  const item = new vscode.CompletionItem(e.name, vscode.CompletionItemKind.Event);
+  item.detail = `RBXScriptSignal — event`;
+  item.documentation = e.description || undefined;
+  item.sortText = "3" + e.name;
+  return item;
+}
+
+// RBXScriptSignal methods (hardcoded since they may be missing from wold)
+function signalMethods(): vscode.CompletionItem[] {
+  return [
+    Object.assign(new vscode.CompletionItem("Wait", vscode.CompletionItemKind.Method), {
+      detail: "(): any", sortText: "2Wait", insertText: "Wait()",
+    }),
+    Object.assign(new vscode.CompletionItem("Connect", vscode.CompletionItemKind.Method), {
+      detail: "(callback: function): RBXScriptConnection", sortText: "2Connect",
+      insertText: new vscode.SnippetString("Connect(${1:callback})"),
+    }),
+    Object.assign(new vscode.CompletionItem("Once", vscode.CompletionItemKind.Method), {
+      detail: "(callback: function): void", sortText: "2Once",
+      insertText: new vscode.SnippetString("Once(${1:callback})"),
+    }),
+  ];
 }
 
 function propItem(p: WoldProperty): vscode.CompletionItem {
@@ -317,12 +382,28 @@ function resolveExprType(
       const methods = bindings.getAllMethods(current);
       const m = methods.find(x => x.name.toLowerCase() === parts[i].toLowerCase());
       if (m) { current = m.returns; continue; }
+      const events = bindings.getAllEvents(current);
+      const ev = events.find(x => x.name.toLowerCase() === parts[i].toLowerCase());
+      if (ev) { current = "RBXScriptSignal"; continue; }
       return "Instance";
     }
     return current;
   }
 
-  if (locals.has(root)) return locals.get(root);
+  if (locals.has(root)) {
+    if (parts.length === 1) return locals.get(root);
+    let current = locals.get(root)!;
+    for (let i = 1; i < parts.length; i++) {
+      const props = bindings.getAllProperties(current);
+      const p = props.find(x => x.name.toLowerCase() === parts[i].toLowerCase());
+      if (p) { current = p.type; continue; }
+      const events = bindings.getAllEvents(current);
+      const ev = events.find(x => x.name.toLowerCase() === parts[i].toLowerCase());
+      if (ev) { return "RBXScriptSignal"; }
+      return undefined;
+    }
+    return current;
+  }
   if (bindings.getType(root)) {
     if (parts.length === 1) return root;
     // Chain through properties of the known type
@@ -334,6 +415,9 @@ function resolveExprType(
       const methods = bindings.getAllMethods(current);
       const m = methods.find(x => x.name.toLowerCase() === parts[i].toLowerCase());
       if (m) { current = m.returns; continue; }
+      const events = bindings.getAllEvents(current);
+      const ev = events.find(x => x.name.toLowerCase() === parts[i].toLowerCase());
+      if (ev) { current = "RBXScriptSignal"; continue; }
       return undefined;
     }
     return current;
@@ -396,7 +480,7 @@ function detectContext(linePrefix: string): Ctx {
   const lastChar = linePrefix[linePrefix.length - 1] ?? "";
   if (lastChar === "." || lastChar === ":") {
     // Check if it's Enum. specifically (Enum member context)
-    if (/Enum\.$/.test(trimmed)) return Ctx.ENUM_VALUE;
+    if (/Enum\.\w*\.$/.test(trimmed)) return Ctx.ENUM_VALUE;
     return Ctx.DOT_COLON;
   }
 
@@ -454,6 +538,21 @@ export function createCompletionProvider(bindings: WoldBindings): vscode.Complet
         return [];
       }
 
+      // ── GetService("...") string argument ─────────────
+      const gsMatch = linePrefix.match(/(\w+):GetService\s*\(\s*["']([^"']*)$/);
+      if (gsMatch) {
+        const servicePartial = gsMatch[2].toLowerCase();
+        const items: vscode.CompletionItem[] = [];
+        for (const [, t] of bindings.types) {
+          if (t.tags?.includes("service") || /[Ss]ervice$/.test(t.name)) {
+            if (t.name.toLowerCase().startsWith(servicePartial)) {
+              items.push(new vscode.CompletionItem(t.name, vscode.CompletionItemKind.Class));
+            }
+          }
+        }
+        return items;
+      }
+
       // ── Definition name / comment / string → suppress ─
       if (ctx === Ctx.DEFINITION_NAME || ctx === Ctx.COMMENT || ctx === Ctx.STRING) {
         return [];
@@ -469,8 +568,15 @@ export function createCompletionProvider(bindings: WoldBindings): vscode.Complet
           const items: vscode.CompletionItem[] = [];
           if (lastChar === ":") {
             for (const m of bindings.getAllMethods(typeName)) items.push(methodItem(m, true));
+            // If colon on an event type, also show RBXScriptSignal methods
+            if (typeName === "RBXScriptSignal") {
+              for (const m of signalMethods()) items.push(m);
+            }
           } else {
             for (const p of bindings.getAllProperties(typeName)) items.push(propItem(p));
+            for (const e of bindings.getAllEvents(typeName)) {
+              items.push(eventAsPropItem(e));
+            }
             for (const m of bindings.getAllMethods(typeName)) items.push(methodItem(m, false));
           }
           return items;
@@ -486,29 +592,44 @@ export function createCompletionProvider(bindings: WoldBindings): vscode.Complet
       const items: vscode.CompletionItem[] = [];
       const locals = extractLocalTypes(document, bindings);
 
+      // Returns 0=exact 1=prefix 2=substring -1=no-match
+      function matchScore(label: string): number {
+        return sharedMatchScore(label, wordPrefix);
+      }
+
       function push(item: vscode.CompletionItem) {
         const lbl = item.label as string;
-        if (!seen.has(lbl)) { seen.add(lbl); items.push(item); }
+        if (seen.has(lbl)) return;
+        const score = matchScore(lbl);
+        if (score < 0) return;
+        seen.add(lbl);
+        // Adjust sortText: prefix matches (0-1) before substring (2)
+        const prefix = score <= 1 ? "0" : "1";
+        item.sortText = prefix + (item.sortText || "5") + lbl;
+        items.push(item);
       }
 
       function addLocals() {
         for (const [name, type] of locals) {
-          if (name.toLowerCase().startsWith(wordPrefix)) push(localItem(name, type));
+          if (matchScore(name) < 0) continue;
+          push(localItem(name, type));
         }
       }
 
       function addApiGlobals() {
-        for (const [_, g] of bindings.globals) {
-          if (g.name.toLowerCase().startsWith(wordPrefix)) push(globalItem(g));
+        for (const [, g] of bindings.globals) {
+          if (matchScore(g.name) < 0) continue;
+          push(globalItem(g));
         }
-        for (const [_, f] of bindings.functions) {
-          if (f.name.toLowerCase().startsWith(wordPrefix)) push(funcItem(f));
+        for (const [, f] of bindings.functions) {
+          if (matchScore(f.name) < 0) continue;
+          push(funcItem(f));
         }
       }
 
       function addEnumValues() {
-        for (const [_, e] of bindings.enums) {
-          if (e.name.toLowerCase().startsWith(wordPrefix)) push(enumItem(e));
+        for (const [, e] of bindings.enums) {
+          if (matchScore(e.name) >= 0) push(enumItem(e));
           for (const member of e.items) {
             const full = `enum.${e.name}.${member}`.toLowerCase();
             if (full.startsWith(fullLine.toLowerCase())) push(enumMemberItem(e.name, member));
@@ -518,13 +639,15 @@ export function createCompletionProvider(bindings: WoldBindings): vscode.Complet
 
       function addValueKeywords() {
         for (const kw of VALUE_KEYWORDS) {
-          if (kw.label.startsWith(wordPrefix)) push(kwItem(kw.label, kw.snippet));
+          if (matchScore(kw.label) < 0) continue;
+          push(kwItem(kw.label, kw.snippet));
         }
       }
 
       function addStructuralKeywords() {
         for (const kw of STRUCTURAL_KEYWORDS) {
-          if (kw.label.startsWith(wordPrefix)) push(kwItem(kw.label, kw.snippet));
+          if (matchScore(kw.label) < 0) continue;
+          push(kwItem(kw.label, kw.snippet));
         }
       }
 

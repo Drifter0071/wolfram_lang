@@ -53,6 +53,7 @@ pub const ROBLOX_GLOBALS: &[&str] = &[
     "BrickColor",
     "TweenInfo",
     "RaycastParams",
+    "OverlapParams",
     "Region3",
     "Rect",
     "NumberRange",

@@ -3,7 +3,7 @@
 -- Output: StarterPlayer/StarterPlayerScripts/Client/Main
 
 local Players = game:GetService("Players")
-local player = Players.LocalPlayer
+local player: Player = Players.LocalPlayer
 
 local products = [
     {name = "pizza", price = 350},
@@ -13,7 +13,7 @@ local products = [
 ]
 
 print(f"🛒  Menu for {player.Name}:")
-local total = 0
+local total: number = 0
 for item in products {
     print(f"    {item.name} — 💰{item.price}")
     total += item.price
