@@ -530,19 +530,49 @@ end
 cleanup()
 ```
 
-### Safe Member Chains
+### Type Annotations (IntelliSense only)
 
-Non-`self` member chains are automatically wrapped in nil-safety guards:
+Wolfram supports TypeScript-like type annotations. **Annotations are stripped from Luau output**
+and exist purely to drive IDE completions and diagnostics.
 
 ```js
-local position = mouse.Hit.Position   // mouse might be nil
+local player: Player = Players.LocalPlayer
+local items: Part[]
+local lookup: {[Player]: boolean}
+
+function createBeam(from: Vector3, to: Vector3): Beam
+local tween: Tween = TweenService:Create(obj, info, {Value = 1})
+
+for zone: Part in workspace:GetChildren() { zone.Anchored = true }
 ```
 
+| Syntax | Description |
+|--------|-------------|
+| `local name: Type` | Simple type annotation |
+| `local name: Type[]` | Array type annotation |
+| `local name: {[K]: V}` | Table type annotation |
+| `function name(param: Type)` | Parameter type annotation |
+| `function name(): ReturnType` | Return type annotation |
+| `for var: Type in expr` | Loop variable annotation |
+
+### Event + IntelliSense
+
+- **Events** show in dot completions — `player.CharacterAdded:` resolves to `:Wait()`, `:Connect()`, `:Once()`
+- **Method returns** — `TweenService:Create()` resolves to `Tween` type for chained completions
+- **Service suggestions** — inside `:GetService("string")`, all Roblox services are suggested
+- **Enum members** — `Enum.EasingStyle.` shows members; accepting pastes only the member name
+- **24 built-in types** — Vector3, CFrame, OverlapParams, RaycastParams, UDim2, …
+
+### Member Chains
+
+Wolfram emits plain chains — no automatic safe-navigation wrapping:
+
+```js
+local ui = zone.Display.Canvas.InfoDisplay
+```
 ```lua
-local position = (mouse and mouse.Hit and mouse.Hit.Position)
+local ui = zone.Display.Canvas.InfoDisplay  -- straight chain
 ```
-
-**Self-rooted chains** (`self.config.radius`) skip safe wrapping — `self` is always defined in method bodies as a closure-captured value from `.new()`.
 
 ### Decorators
 
@@ -594,7 +624,7 @@ src/
 ├── analyze.rs               JSON diagnostics extractor
 ├── luau_checker.rs          Luau validation engine
 ├── tester.rs                Test harness
-└── tests.rs                 Unit + integration tests (160 tests)
+└── tests.rs                 Unit + integration tests (200 tests)
 ```
 
 ---

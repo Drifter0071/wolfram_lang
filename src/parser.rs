@@ -76,15 +76,35 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_annotation(&mut self) -> Result<String, String> {
-        let name = match self.advance() {
-            Some(Token::Ident(n)) => n,
-            _ => return Err(self.err_msg("Expected type name")),
-        };
-        if self.peek() == Some(&Token::LBracket) && self.peek_ahead(1) == Some(&Token::RBracket) {
-            self.advance(); self.advance();
-            return Ok(format!("{}[]", name));
+        let t = self.peek().cloned();
+        match t {
+            Some(Token::Ident(_)) => {
+                let name = match self.advance() {
+                    Some(Token::Ident(n)) => n,
+                    _ => unreachable!(),
+                };
+                if self.peek() == Some(&Token::LBracket) && self.peek_ahead(1) == Some(&Token::RBracket) {
+                    self.advance(); self.advance();
+                    return Ok(format!("{}[]", name));
+                }
+                Ok(name)
+            }
+            Some(Token::LBrace) => {
+                // Skip table type annotation: {[K]: V}
+                self.advance(); // {
+                let mut depth = 1;
+                while depth > 0 {
+                    match self.advance() {
+                        Some(Token::LBrace) => depth += 1,
+                        Some(Token::RBrace) => depth -= 1,
+                        None => return Err(self.err_msg("Unclosed table type annotation")),
+                        _ => {}
+                    }
+                }
+                Ok("table".into())
+            }
+            _ => Err(self.err_msg("Expected type name")),
         }
-        Ok(name)
     }
 
     fn peek_ahead(&self, n: usize) -> Option<&Token> {
@@ -300,6 +320,12 @@ impl<'a> Parser<'a> {
         self.expect(Token::LParen)?;
         let (params, param_types, param_defaults) = self.parse_param_list()?;
         self.expect(Token::RParen)?;
+        let return_type = if self.peek() == Some(&Token::Colon) {
+            self.advance();
+            self.parse_type_annotation().ok()
+        } else {
+            None
+        };
         let block = self.parse_block()?;
         Ok(Stmt::FuncDef {
             name,
@@ -309,7 +335,7 @@ impl<'a> Parser<'a> {
             block,
             access: "private".into(),
             is_async: false,
-            return_type: None,
+            return_type,
             span: self.current_span(),
         })
     }
@@ -436,6 +462,12 @@ impl<'a> Parser<'a> {
         self.expect(Token::LParen)?;
         let (params, param_types, param_defaults) = self.parse_param_list()?;
         self.expect(Token::RParen)?;
+        let return_type = if self.peek() == Some(&Token::Colon) {
+            self.advance();
+            self.parse_type_annotation().ok()
+        } else {
+            None
+        };
         let block = self.parse_block()?;
         Ok(Stmt::FuncDef {
             name,
@@ -445,7 +477,7 @@ impl<'a> Parser<'a> {
             block,
             access: "private".into(),
             is_async,
-            return_type: None,
+            return_type,
             span: self.current_span(),
         })
     }
