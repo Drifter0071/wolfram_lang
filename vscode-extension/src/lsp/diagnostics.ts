@@ -60,6 +60,9 @@ function collectUndefinedVars(
     // Find byte offsets inside member-access positions: .ident or :ident
     const memberAccessOffsets = findMemberAccessOffsets(source);
 
+    // Find byte offsets inside type annotation positions (:Type, {[K]:V})
+    const typeAnnotationOffsets = findTypeAnnotationOffsets(source);
+
     const lines = source.split("\n");
     const identRe = /\b([a-zA-Z_]\w*)\b/g;
     let m: RegExpExecArray | null;
@@ -89,6 +92,9 @@ function collectUndefinedVars(
 
         // Skip if this is a member-access target (.ident or :ident)
         if (memberAccessOffsets.has(offset)) continue;
+
+        // Skip type annotation identifiers (:Type, {[K]:V})
+        if (typeAnnotationOffsets.has(offset)) continue;
 
         // Skip if defined
         if (definedVars.has(name)) continue;
@@ -160,6 +166,44 @@ function findMemberAccessOffsets(source: string): Set<number> {
     while ((m = re.exec(source)) !== null) {
         const identStart = m.index + m[0].indexOf(m[1]);
         offsets.add(identStart);
+    }
+    return offsets;
+}
+
+/**
+ * Scan source for identifiers in type annotation positions and return their
+ * byte offsets so they are not flagged as undefined variables. Type annotation
+ * contexts include:
+ *   local name: Type          — variable type
+ *   param: Type               — function parameter type  
+ *   ): ReturnType             — function return type
+ *   for var: Type in ...      — loop variable type
+ *   {[Key]: Value}            — table type
+ *   struct field: Type        — struct field type
+ */
+function findTypeAnnotationOffsets(source: string): Set<number> {
+    const offsets = new Set<number>();
+    // local NAME: Type / for NAME: Type / NAME: Type (= param)
+    const localRe = /(?:local\s+[\w,]+|\w+|\))\s*:\s*(\w+)/g;
+    let m: RegExpExecArray | null;
+    while ((m = localRe.exec(source)) !== null) {
+        const idx = m[0].lastIndexOf(m[1]);
+        if (idx >= 0) offsets.add(m.index + idx);
+    }
+    // {[Key]: Value} table types
+    const tableRe = /\[\s*(\w+)\s*\]\s*:\s*(\w+)/g;
+    while ((m = tableRe.exec(source)) !== null) {
+        const keyIdx = m[0].lastIndexOf(m[1]);
+        if (keyIdx >= 0) offsets.add(m.index + keyIdx);
+        const valIdx = m[0].lastIndexOf(m[2]);
+        if (valIdx >= 0) offsets.add(m.index + valIdx);
+    }
+    // struct field: Type (inside struct blocks)
+    const structRe = /\b(\w+)\s*:\s*(\w+)\s*(?:,|\n)/g;
+    while ((m = structRe.exec(source)) !== null) {
+        // Only add the value side (the type), not the struct field name
+        const valIdx = m[0].lastIndexOf(m[2]);
+        if (valIdx >= 0) offsets.add(m.index + valIdx);
     }
     return offsets;
 }
