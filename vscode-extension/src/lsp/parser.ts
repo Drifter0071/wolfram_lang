@@ -248,7 +248,19 @@ class Parser {
 
     private parseTypeAnnotation(): string | null {
         const t = this.peek();
-        if (!t || t.type !== "IDENT") return null;
+        if (!t) return null;
+
+        if (t.type === "LBRACE" && this.peekAhead(1)?.type === "LBRACKET") {
+            this.advance();
+            this.advance();
+            const keyType = this.expect("IDENT").value;
+            this.expect("RBRACKET");
+            this.expect("COLON");
+            const valType = this.expect("IDENT").value;
+            this.expect("RBRACE");
+            return `{[${keyType}]: ${valType}}`;
+        }
+        if (t.type !== "IDENT") return null;
         const typeName = this.expect("IDENT").value;
 
         if (this.peek()?.type === "LBRACKET" && this.peekAhead(1)?.type === "RBRACKET") {
@@ -379,6 +391,11 @@ class Parser {
         const paramDefaults: (Expr | null)[] = [];
         this.parseParamList(params, paramTypes, paramDefaults);
         this.expect("RPAREN");
+        let returnType: string | null = null;
+        if (this.peek()?.type === "COLON") {
+            this.advance();
+            returnType = this.parseTypeAnnotation();
+        }
         const block = this.parseBlock();
         this.scope.set(name, "function");
         this.symbols.push({
@@ -386,8 +403,10 @@ class Parser {
             location: { line: 0, column: 0, endLine: 0, endColumn: 0 },
             params, fields: [],
         });
-        for (const p of params) this.scope.set(p, "any");
-        return { kind: "FuncDef", name, params, paramTypes, paramDefaults, block, access: "private", isAsync: false, span: this.currentSpan(), returnType: null };
+        for (let i = 0; i < params.length; i++) {
+            this.scope.set(params[i], paramTypes[i] || "any");
+        }
+        return { kind: "FuncDef", name, params, paramTypes, paramDefaults, block, access: "private", isAsync: false, span: this.currentSpan(), returnType };
     }
 
     private parseIf(): Stmt {
